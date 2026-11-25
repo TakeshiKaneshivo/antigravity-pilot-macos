@@ -6,21 +6,24 @@ BUILD_DIR="$ROOT/build"
 
 MAKE_DMG=0
 BUILD_WEB=0
+NOTES_FILE=""
 usage() {
   cat <<'EOF'
 Usage:
-  ./build.sh [--dmg] [--build-web] [-h|--help]
+  ./build.sh [--dmg] [--build-web] [--notes-file <path>] [-h|--help]
 
 Options:
-  --dmg        Also create a compressed .dmg installer in build/
-  --build-web  Rebuild src/McpAppWeb/dist/dashboard.html via npm before packaging
-  -h, --help   Show this help.
+  --dmg                Also create a compressed .dmg installer and latest.json in build/
+  --build-web          Rebuild src/McpAppWeb/dist/dashboard.html via npm before packaging
+  --notes-file <path>  Optional JSON (language map) or Markdown/text release notes for latest.json
+  -h, --help           Show this help.
 
 Environment overrides:
   APP_VERSION  Bundle short version & DMG version (default: 0.1.0)
   MIN_MACOS    Minimum supported macOS version (default: 13.0)
   ARCHS        Space-separated architectures (default: "arm64 x86_64")
   SDKROOT      macOS SDK path (default: xcrun --show-sdk-path)
+  GITHUB_REPO  GitHub owner/repo for release URLs (default: TakeshiKaneshivo/antigravity-pilot-macos)
 EOF
 }
 
@@ -33,6 +36,14 @@ while (($#)); do
     --build-web)
       BUILD_WEB=1
       shift
+      ;;
+    --notes-file)
+      if [[ $# -lt 2 ]]; then
+        echo "--notes-file requires a path argument" >&2
+        exit 2
+      fi
+      NOTES_FILE="$2"
+      shift 2
       ;;
     -h|--help)
       usage
@@ -54,6 +65,7 @@ APP_VERSION="${APP_VERSION:-0.1.0}"
 MIN_MACOS="${MIN_MACOS:-13.0}"
 ARCHS="${ARCHS:-arm64 x86_64}"
 SDKROOT="${SDKROOT:-$(xcrun --show-sdk-path)}"
+GITHUB_REPO="${GITHUB_REPO:-TakeshiKaneshivo/antigravity-pilot-macos}"
 
 if [[ "$MAKE_DMG" -eq 1 ]] && ! command -v "$SWIFTC" >/dev/null 2>&1; then
   echo "--dmg requires swiftc ($SWIFTC not found)" >&2
@@ -236,6 +248,7 @@ EOF
 fi
 
 DMG_PATH=""
+MANIFEST_PATH=""
 if [[ "$MAKE_DMG" -eq 1 ]]; then
   if [[ "${#ARCH_LIST[@]}" -gt 1 ]]; then
     ARCH_LABEL="universal"
@@ -252,6 +265,63 @@ if [[ "$MAKE_DMG" -eq 1 ]]; then
   hdiutil create -volname "Antigravity Pilot" -srcfolder "$DMG_STAGING" -ov -format UDZO "$DMG_PATH"
   rm -rf "$DMG_STAGING"
   hdiutil verify "$DMG_PATH"
+
+  DMG_SHA256="$(shasum -a 256 "$DMG_PATH" | awk '{print $1}')"
+  DMG_SIZE="$(stat -f%z "$DMG_PATH")"
+  DMG_FILENAME="$(basename "$DMG_PATH")"
+  MANIFEST_PATH="$BUILD_DIR/latest.json"
+
+  python3 - "$MANIFEST_PATH" "$APP_VERSION" "$MIN_MACOS" "$GITHUB_REPO" "$DMG_FILENAME" "$DMG_SHA256" "$DMG_SIZE" "$NOTES_FILE" <<'PYEOF'
+import datetime
+import json
+import os
+import sys
+
+out_path, version, min_macos, repo, file_name, sha256_hex, size_str, notes_file = sys.argv[1:9]
+tag = f"v{version}"
+published_at = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+notes = {
+    "zh-Hans": f"Antigravity Pilot {tag} 更新包。",
+    "zh-Hant": f"Antigravity Pilot {tag} 更新套件。",
+    "en": f"Antigravity Pilot {tag} release.",
+    "ru": f"Выпуск Antigravity Pilot {tag}."
+}
+
+if notes_file:
+    if not os.path.isfile(notes_file):
+        raise SystemExit(f"Notes file not found: {notes_file}")
+    with open(notes_file, "r", encoding="utf-8") as fh:
+        raw = fh.read().strip()
+    if raw:
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict):
+                notes = {str(k): str(v) for k, v in parsed.items() if str(v).strip()}
+            else:
+                notes = {k: raw for k in notes}
+        except json.JSONDecodeError:
+            notes = {k: raw for k in notes}
+
+manifest = {
+    "version": version,
+    "tag": tag,
+    "publishedAt": published_at,
+    "minMacOS": min_macos,
+    "dmg": {
+        "fileName": file_name,
+        "url": f"https://github.com/{repo}/releases/download/{tag}/{file_name}",
+        "sha256": sha256_hex,
+        "size": int(size_str),
+    },
+    "releasePageUrl": f"https://github.com/{repo}/releases/tag/{tag}",
+    "notes": notes,
+}
+
+with open(out_path, "w", encoding="utf-8") as fh:
+    json.dump(manifest, fh, ensure_ascii=False, indent=2)
+    fh.write("\n")
+PYEOF
 fi
 
 printf 'Built:\n'
@@ -266,5 +336,8 @@ if [[ -d "$BUILD_DIR/Antigravity Pilot.app" ]]; then
 fi
 if [[ -n "$DMG_PATH" && -f "$DMG_PATH" ]]; then
   printf '  %s\n' "$DMG_PATH"
-  printf 'SHA256:\n  %s\n' "$(shasum -a 256 "$DMG_PATH" | awk '{print $1}')"
+  printf 'SHA256:\n  %s\n' "$DMG_SHA256"
+fi
+if [[ -n "$MANIFEST_PATH" && -f "$MANIFEST_PATH" ]]; then
+  printf '  %s\n' "$MANIFEST_PATH"
 fi

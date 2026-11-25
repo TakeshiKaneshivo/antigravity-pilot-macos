@@ -52,6 +52,10 @@ struct AppSupport {
         root.appendingPathComponent("custom_pricing.json")
     }
 
+    var updatesDirectory: URL {
+        root.appendingPathComponent("Updates", isDirectory: true)
+    }
+
     var pluginsRoot: URL {
         customPluginsRoot ?? FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".gemini/config/plugins", isDirectory: true)

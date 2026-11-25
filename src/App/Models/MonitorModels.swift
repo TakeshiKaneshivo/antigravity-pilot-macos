@@ -291,7 +291,18 @@ enum PricingCatalog {
               let decoded = try? JSONDecoder().decode([String: [PricingRule]].self, from: data) else {
             return [:]
         }
-        return decoded
+        var normalized: [String: [PricingRule]] = [:]
+        for (rawKey, rules) in decoded {
+            let trimmedLower = rawKey.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if !trimmedLower.isEmpty {
+                normalized[trimmedLower] = rules
+            }
+            let canonical = normalizeModelKey(rawKey)
+            if normalized[canonical] == nil {
+                normalized[canonical] = rules
+            }
+        }
+        return normalized
     }
 
     static func normalizeModelKey(_ rawModel: String) -> String {
@@ -355,9 +366,12 @@ enum PricingCatalog {
         customRules: [String: [PricingRule]] = [:],
         promptTokensForTier: Int? = nil
     ) -> Double {
+        let trimmedLower = rawModel.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let normKey = normalizeModelKey(rawModel)
         let candidateRules: [PricingRule]
-        if let custom = customRules[normKey], !custom.isEmpty {
+        if let customExact = customRules[trimmedLower], !customExact.isEmpty {
+            candidateRules = customExact
+        } else if let custom = customRules[normKey], !custom.isEmpty {
             candidateRules = custom
         } else if let builtIn = builtInRules[normKey], !builtIn.isEmpty {
             candidateRules = builtIn
@@ -398,6 +412,9 @@ enum TokenFormatting {
     }
 
     static func compactTokensShort(_ count: Int) -> String {
+        if count >= 1_000_000_000 {
+            return String(format: "%.1fB", Double(count) / 1_000_000_000.0)
+        }
         if count >= 1_000_000 {
             return String(format: "%.1fM", Double(count) / 1_000_000.0)
         }

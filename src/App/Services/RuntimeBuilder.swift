@@ -303,12 +303,15 @@ final class RuntimeBuilder {
         progress(L10n.t("启动 Antigravity Pilot...", "Launching Antigravity Pilot...", config.appLanguage))
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = true
+        let sem = DispatchSemaphore(value: 0)
+        var launchError: Error?
         NSWorkspace.shared.openApplication(at: support.runtimeApp, configuration: configuration) { _, error in
-            if let error {
-                DispatchQueue.main.async {
-                    NSAlert(error: error).runModal()
-                }
-            }
+            launchError = error
+            sem.signal()
+        }
+        _ = sem.wait(timeout: .now() + 10)
+        if let launchError {
+            throw launchError
         }
     }
 
@@ -392,7 +395,7 @@ final class RuntimeBuilder {
         let noProxy = config.effectiveNoProxy
         var lines = [
             "AG_PROXY=\(config.hookProxyURL)",
-            "AG_PROXY_LOG=1",
+            "AG_PROXY_LOG=0",
             "AG_PROXY_TIMEOUT_MS=15000",
             "AG_APP_LANG=\(config.appLanguage.resolved.rawValue)",
             "HTTP_PROXY=\(config.envProxyURL)",
@@ -943,6 +946,7 @@ final class AppModel: ObservableObject {
     let support = AppSupport()
     private var probeGeneration = 0
     private var mcpStatusGeneration = 0
+    private var runtimeStatusGeneration = 0
     private var debounceHealthTask: Task<Void, Never>?
     private var debounceNoProxyTask: Task<Void, Never>?
 
@@ -1013,6 +1017,8 @@ final class AppModel: ObservableObject {
     }
 
     func refreshRuntimeStatus() {
+        runtimeStatusGeneration += 1
+        let gen = runtimeStatusGeneration
         let lang = config.appLanguage
         let sourcePlist = support.sourceApp.appendingPathComponent("Contents/Info.plist")
         let sourceVersion = RuntimeBuilder.readBundleShortVersion(at: sourcePlist)
@@ -1079,7 +1085,8 @@ final class AppModel: ObservableObject {
         DispatchQueue.global(qos: .utility).async { [weak self] in
             let fast = RuntimeBuilder.canFastHotUpdate(config: currentCfg, support: currentSupport)
             DispatchQueue.main.async {
-                self?.canHotUpdate = fast
+                guard let self, self.runtimeStatusGeneration == gen else { return }
+                self.canHotUpdate = fast
             }
         }
     }
@@ -1218,16 +1225,6 @@ final class AppModel: ObservableObject {
         savePreferencesOnly()
     }
 
-    func saveConfigOnly() {
-        do {
-            try validate(config)
-            try support.saveConfig(config)
-            refreshRuntimeStatus()
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
-
     func scheduleProxyHealthCheck() {
         debounceHealthTask?.cancel()
         debounceHealthTask = Task { [weak self] in
@@ -1272,6 +1269,12 @@ final class AppModel: ObservableObject {
             let currentConfig = config
             let currentSupport = support
 
+            let report = await ProxyHealthService.probe(config: currentConfig, includeInternetCheck: true)
+            healthReport = report
+            guard report.tcpReachable && report.socks5HandshakeOK else {
+                throw BuilderError.invalidPort(report.detailMessage)
+            }
+
             let instances = RunningInstanceManager.detectRunningInstances(support: currentSupport)
             runningInstances = instances
             if !instances.isEmpty {
@@ -1294,19 +1297,13 @@ final class AppModel: ObservableObject {
                     let sep = (lang.resolved == .zhHans || lang.resolved == .zhHant) ? "、" : ", "
                     let names = instances.map { "\($0.kind.localizedName(lang)) (PID \($0.id))" }.joined(separator: sep)
                     throw BuilderError.commandFailed(L10n.t(
-                        zhHans: "检测到正在运行的实例：\(names)。请先退出或点击“优雅退出并继续”。",
+                        zhHans: "检测到正在运行的实例：\(names)。请先退出或点击“优雅退出并启动”。",
                         zhHant: "偵測到正在執行的執行個體：\(names)。請先結束或點擊「優雅結束並啟動」。",
                         en: "Running instances detected: \(names). Quit them first or click 'Quit & Launch'.",
                         ru: "Обнаружены запущенные процессы: \(names). Закройте их или нажмите «Закрыть и запуск».",
                         lang
                     ))
                 }
-            }
-
-            let report = await ProxyHealthService.probe(config: currentConfig, includeInternetCheck: true)
-            healthReport = report
-            guard report.tcpReachable && report.socks5HandshakeOK else {
-                throw BuilderError.invalidPort(report.detailMessage)
             }
 
             try currentSupport.saveConfig(currentConfig)

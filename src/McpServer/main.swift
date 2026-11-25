@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 final class PilotMCPService: MCPServiceHandling, @unchecked Sendable {
@@ -166,7 +167,7 @@ final class PilotMCPService: MCPServiceHandling, @unchecked Sendable {
         ]
 
         do {
-            async let statusTask = rpcClient.fetchUserStatus(hub: hub)
+            async let statusTask = rpcClient.fetchUserStatus(hub: hub, lang: lang)
             async let sessionsTask = rpcClient.fetchSessions(hub: hub)
 
             let (profile, pools, labels) = try await statusTask
@@ -456,13 +457,23 @@ final class PilotMCPService: MCPServiceHandling, @unchecked Sendable {
         let reqs = totals?["requestCount"] as? Int ?? 0
         let usd = TokenFormatting.usd(totals?["estimatedCostUSD"] as? Double ?? 0)
         let scanned = usage["scannedFilesCount"] as? Int ?? 0
+        let periodLabel = usagePeriod(for: period).localizedTitle(lang)
         return L10n.t(
-            zhHans: "周期（\(period)）累计 \(toks) Tokens，\(reqs) 次模型调用，估算 API 账单 \(usd)（已扫描 \(scanned) 个会话归档）。",
-            zhHant: "週期（\(period)）累計 \(toks) Tokens，\(reqs) 次模型呼叫，估算 API 帳單 \(usd)（已掃描 \(scanned) 個工作階段歸檔）。",
-            en: "Period (\(period)): \(toks) tokens, \(reqs) calls, est. API cost \(usd) (\(scanned) transcripts scanned).",
-            ru: "Период (\(period)): \(toks) токенов, \(reqs) вызовов, оценка API \(usd) (просканировано логов: \(scanned)).",
+            zhHans: "周期（\(periodLabel)）累计 \(toks) Tokens，\(reqs) 次模型调用，估算 API 账单 \(usd)（已扫描 \(scanned) 个会话归档）。",
+            zhHant: "週期（\(periodLabel)）累計 \(toks) Tokens，\(reqs) 次模型呼叫，估算 API 帳單 \(usd)（已掃描 \(scanned) 個工作階段歸檔）。",
+            en: "Period (\(periodLabel)): \(toks) tokens, \(reqs) calls, est. API cost \(usd) (\(scanned) transcripts scanned).",
+            ru: "Период (\(periodLabel)): \(toks) токенов, \(reqs) вызовов, оценка API \(usd) (просканировано логов: \(scanned)).",
             lang
         )
+    }
+
+    private func usagePeriod(for key: String) -> UsagePeriod {
+        switch key {
+        case "today": return .today
+        case "days7": return .days7
+        case "all": return .all
+        default: return .days30
+        }
     }
 
     private static func periodJSONKey(_ period: UsagePeriod) -> String {
@@ -508,6 +519,7 @@ func parseArgs() -> (htmlPath: String?, version: String) {
     return (htmlPath, version)
 }
 
+signal(SIGPIPE, SIG_IGN)
 let parsed = parseArgs()
 let service = PilotMCPService(htmlPath: parsed.htmlPath, version: parsed.version)
 let server = MCPStdioServer(handler: service)

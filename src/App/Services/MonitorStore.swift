@@ -6,6 +6,7 @@ final class MonitorStore: ObservableObject {
     @Published var userProfile: UserProfileInfo?
     @Published var quotaPools: [QuotaPoolGroup] = []
     @Published var sessions: [SessionSummary] = []
+    @Published var pinnedCascadeId: String? = nil
     @Published var selectedCascadeId: String?
     @Published var activeContext: SessionContextSnapshot?
     @Published var usageHistory: UsageHistorySnapshot = .empty
@@ -15,7 +16,6 @@ final class MonitorStore: ObservableObject {
     @Published var lastUpdatedAt: Date?
 
     private let rpcClient = LanguageServerClient()
-    private var modelLabels: [String: String] = [:]
     nonisolated(unsafe) private var liveTimer: Timer?
     private var lastHistoryScanAt: Date = .distantPast
     private var isInteractiveVisible = true
@@ -39,8 +39,12 @@ final class MonitorStore: ObservableObject {
         }
     }
 
-    func selectSession(_ cascadeId: String) {
-        selectedCascadeId = cascadeId
+    func selectSession(_ cascadeId: String?) {
+        let normalized = (cascadeId?.isEmpty == false) ? cascadeId : nil
+        pinnedCascadeId = normalized
+        if let normalized {
+            selectedCascadeId = normalized
+        }
         refreshLive(force: true)
     }
 
@@ -56,7 +60,8 @@ final class MonitorStore: ObservableObject {
         isRefreshingLive = true
         liveRefreshGeneration += 1
         let generation = liveRefreshGeneration
-        let preferredId = selectedCascadeId
+        let preferredId = pinnedCascadeId
+        let currentLang = L10n.current
 
         Task { [weak self] in
             guard let self else { return }
@@ -68,6 +73,8 @@ final class MonitorStore: ObservableObject {
 
             guard let hub else {
                 self.liveHub = nil
+                self.userProfile = nil
+                self.selectedCascadeId = nil
                 self.activeContext = nil
                 self.sessions = []
                 self.quotaPools = []
@@ -77,13 +84,14 @@ final class MonitorStore: ObservableObject {
             }
 
             do {
-                async let statusTask = self.rpcClient.fetchUserStatus(hub: hub)
+                async let statusTask = self.rpcClient.fetchUserStatus(hub: hub, lang: currentLang)
                 async let sessionsTask = self.rpcClient.fetchSessions(hub: hub)
 
                 let (profile, pools, labels) = try await statusTask
                 let sessionList = try await sessionsTask
 
-                let targetSession = sessionList.first(where: { $0.id == preferredId }) ?? sessionList.first
+                let targetSession = preferredId.flatMap { pid in sessionList.first(where: { $0.id == pid }) }
+                    ?? sessionList.first
                 let contextSnap: SessionContextSnapshot?
                 if let targetSession {
                     contextSnap = try await self.rpcClient.fetchSessionContext(
@@ -100,11 +108,8 @@ final class MonitorStore: ObservableObject {
                 self.liveHub = hub
                 self.userProfile = profile
                 self.quotaPools = pools
-                self.modelLabels = labels
                 self.sessions = sessionList
-                if let targetSession {
-                    self.selectedCascadeId = targetSession.id
-                }
+                self.selectedCascadeId = targetSession?.id
                 self.activeContext = contextSnap
                 self.lastLiveError = nil
                 self.lastUpdatedAt = Date()

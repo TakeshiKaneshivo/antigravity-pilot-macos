@@ -20,7 +20,7 @@ struct MenuBarPopoverView: View {
                     Image(systemName: "network")
                         .font(.caption)
                         .foregroundStyle(healthColor)
-                    Text("\(L10n.t("代理", "Proxy", lang)) \(appModel.config.host):\(appModel.config.hookPort)")
+                    Text("\(L10n.t("代理", "Proxy", lang)) \(appModel.config.displayHookHostPort)")
                         .font(.system(.caption, design: .monospaced))
                     Spacer()
                     PilotStatusPill(text: appModel.healthReport.summaryTitle, color: healthColor)
@@ -50,13 +50,17 @@ struct MenuBarPopoverView: View {
                     .font(.callout.weight(.semibold))
                 Text(
                     monitorStore.liveHub != nil
-                        ? L10n.t(
-                            zhHans: "已连接 LS v\(monitorStore.liveHub?.lsVersion ?? "")",
-                            zhHant: "已連線 LS v\(monitorStore.liveHub?.lsVersion ?? "")",
-                            en: "Connected LS v\(monitorStore.liveHub?.lsVersion ?? "")",
-                            ru: "Подключён LS v\(monitorStore.liveHub?.lsVersion ?? "")",
-                            lang
-                        )
+                        ? {
+                            let ver = (monitorStore.liveHub?.lsVersion ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                            let suffix = ver.isEmpty ? "" : " v\(ver)"
+                            return L10n.t(
+                                zhHans: "已连接 LS\(suffix)",
+                                zhHant: "已連線 LS\(suffix)",
+                                en: "Connected LS\(suffix)",
+                                ru: "Подключён LS\(suffix)",
+                                lang
+                            )
+                        }()
                         : L10n.t("等待 Antigravity 启动", "Waiting for Antigravity", lang)
                 )
                 .font(.caption2)

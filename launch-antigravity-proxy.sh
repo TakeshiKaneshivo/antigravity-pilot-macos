@@ -20,7 +20,8 @@ Options:
   --app PATH             Prepared Antigravity app copy. Default: ./Antigravity-Pilot.app
   --proxy URL            SOCKS5 proxy URL. Default: socks5://127.0.0.1:7890
   --env-proxy URL        Proxy URL for HTTP_PROXY/HTTPS_PROXY/ALL_PROXY.
-                         Default: http://same-host-and-port-as --proxy
+                         Default: http://host:7890 when --proxy uses port 7890,
+                         otherwise same URL as --proxy
   --quiet                Disable dylib debug logs.
   --timeout-ms N         SOCKS5 connect/read/write timeout. Default: 15000
   --dry-run              Print launch environment and exit.

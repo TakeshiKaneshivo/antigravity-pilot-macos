@@ -120,14 +120,15 @@ enum TranscriptScanner {
         return aggregate(cache: cache, scannedFilesCount: discoveredFiles.count, customRules: customRules)
     }
 
+    private static let plannerMarker = Data("PLANNER_RESPONSE".utf8)
+
     private static func parseTranscriptFile(
         url: URL,
         localDayFormatter: DateFormatter,
         isoFractional: ISO8601DateFormatter,
         isoBasic: ISO8601DateFormatter
     ) -> [CachedAggregateRow] {
-        guard let data = try? Data(contentsOf: url, options: .mappedIfSafe),
-              let content = String(data: data, encoding: .utf8) else {
+        guard let data = try? Data(contentsOf: url, options: .mappedIfSafe) else {
             return []
         }
 
@@ -135,13 +136,27 @@ enum TranscriptScanner {
         var seenKeys = Set<String>()
         var grouped: [String: CachedAggregateRow] = [:]
 
-        for rawLine in content.split(separator: "\n", omittingEmptySubsequences: true) {
-            let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !line.isEmpty,
-                  line.contains("PLANNER_RESPONSE"),
-                  let lineData = line.data(using: .utf8),
-                  let entry = try? decoder.decode(TranscriptLineDTO.self, from: lineData),
-                  entry.type == "PLANNER_RESPONSE" else {
+        for var rawLine in data.split(separator: 0x0A, omittingEmptySubsequences: true) {
+            while let last = rawLine.last, last == 0x0D || last == 0x20 || last == 0x09 {
+                rawLine = rawLine.dropLast()
+            }
+            while let first = rawLine.first, first == 0x20 || first == 0x09 {
+                rawLine = rawLine.dropFirst()
+            }
+            guard !rawLine.isEmpty,
+                  rawLine.range(of: plannerMarker) != nil else {
+                continue
+            }
+
+            let lineData = Data(rawLine)
+            let decodedEntry: TranscriptLineDTO?
+            if let direct = try? decoder.decode(TranscriptLineDTO.self, from: lineData) {
+                decodedEntry = direct
+            } else {
+                let sanitized = String(decoding: lineData, as: UTF8.self)
+                decodedEntry = sanitized.data(using: .utf8).flatMap { try? decoder.decode(TranscriptLineDTO.self, from: $0) }
+            }
+            guard let entry = decodedEntry, entry.type == "PLANNER_RESPONSE" else {
                 continue
             }
 

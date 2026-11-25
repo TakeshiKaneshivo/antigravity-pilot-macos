@@ -2,7 +2,9 @@
 import argparse
 import hashlib
 import json
+import os
 import plistlib
+import tempfile
 from pathlib import Path
 
 
@@ -115,7 +117,16 @@ def main() -> None:
             write_u32(unpadded_size),
         ]
     )
-    args.asar.write_bytes(prefix + header_json + (b"\x00" * padding) + b"".join(file_blobs))
+    payload = prefix + header_json + (b"\x00" * padding) + b"".join(file_blobs)
+    fd, tmp_name = tempfile.mkstemp(prefix=".asar-patch-", dir=str(args.asar.parent))
+    try:
+        with os.fdopen(fd, "wb") as fp:
+            fp.write(payload)
+        os.replace(tmp_name, args.asar)
+    except Exception:
+        if os.path.exists(tmp_name):
+            os.unlink(tmp_name)
+        raise
 
     if args.info_plist is not None:
         update_info_plist_integrity(args.info_plist, header_hash)

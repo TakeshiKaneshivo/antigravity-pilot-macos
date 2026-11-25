@@ -354,14 +354,23 @@ enum ProxyHealthService {
                 let rc = Darwin.connect(fd, info.pointee.ai_addr, info.pointee.ai_addrlen)
                 var connected = (rc == 0)
                 if rc != 0 && errno == EINPROGRESS {
-                    var pfd = pollfd(fd: fd, events: Int16(POLLOUT), revents: 0)
-                    let ready = poll(&pfd, 1, Int32(timeoutMs))
-                    if ready > 0 && (pfd.revents & Int16(POLLOUT)) != 0 {
-                        var soErr: Int32 = 0
-                        var len = socklen_t(MemoryLayout<Int32>.size)
-                        if getsockopt(fd, SOL_SOCKET, SO_ERROR, &soErr, &len) == 0 && soErr == 0 {
-                            connected = true
+                    let deadlineNs = DispatchTime.now().uptimeNanoseconds + UInt64(max(1, timeoutMs)) * 1_000_000
+                    while true {
+                        let nowNs = DispatchTime.now().uptimeNanoseconds
+                        let remMs = nowNs >= deadlineNs ? 0 : Int32(min(Int64(Int32.max), Int64((deadlineNs - nowNs + 999_999) / 1_000_000)))
+                        var pfd = pollfd(fd: fd, events: Int16(POLLOUT), revents: 0)
+                        let ready = poll(&pfd, 1, remMs)
+                        if ready < 0 && errno == EINTR {
+                            continue
                         }
+                        if ready > 0 && (pfd.revents & Int16(POLLOUT)) != 0 {
+                            var soErr: Int32 = 0
+                            var len = socklen_t(MemoryLayout<Int32>.size)
+                            if getsockopt(fd, SOL_SOCKET, SO_ERROR, &soErr, &len) == 0 && soErr == 0 {
+                                connected = true
+                            }
+                        }
+                        break
                     }
                 }
                 if connected {

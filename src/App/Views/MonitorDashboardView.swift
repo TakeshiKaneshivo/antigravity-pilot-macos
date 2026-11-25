@@ -136,20 +136,28 @@ struct MonitorDashboardView: View {
                     if !monitorStore.sessions.isEmpty {
                         let topSessions = Array(monitorStore.sessions.prefix(12))
                         let displayedSessions: [SessionSummary] = {
-                            if let selId = monitorStore.selectedCascadeId,
-                               !topSessions.contains(where: { $0.id == selId }),
-                               let extra = monitorStore.sessions.first(where: { $0.id == selId }) {
+                            if let pinnedId = monitorStore.pinnedCascadeId,
+                               !topSessions.contains(where: { $0.id == pinnedId }),
+                               let extra = monitorStore.sessions.first(where: { $0.id == pinnedId }) {
                                 return topSessions + [extra]
                             }
                             return topSessions
                         }()
+                        let autoTitle: String = {
+                            let base = L10n.t("自动（最新会话）", "Auto (Latest)", lang)
+                            if let first = monitorStore.sessions.first {
+                                return "\(base) · \(first.title)"
+                            }
+                            return base
+                        }()
                         Picker(
                             "",
                             selection: Binding(
-                                get: { monitorStore.selectedCascadeId ?? displayedSessions.first?.id ?? "" },
-                                set: { monitorStore.selectSession($0) }
+                                get: { monitorStore.pinnedCascadeId ?? "" },
+                                set: { monitorStore.selectSession($0.isEmpty ? nil : $0) }
                             )
                         ) {
+                            Text(autoTitle).tag("")
                             ForEach(displayedSessions) { session in
                                 Text(session.title).tag(session.id)
                             }

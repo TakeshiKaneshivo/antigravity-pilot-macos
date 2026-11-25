@@ -9,7 +9,7 @@ final class LoopbackSessionDelegate: NSObject, URLSessionDelegate {
     ) {
         let host = challenge.protectionSpace.host
         if challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
-           (host == "127.0.0.1" || host == "localhost"),
+           (host == "127.0.0.1" || host == "localhost" || host == "::1"),
            let trust = challenge.protectionSpace.serverTrust {
             completionHandler(.useCredential, URLCredential(trust: trust))
             return
@@ -114,7 +114,23 @@ final class LanguageServerClient {
         return errno == EPERM
     }
 
-    func fetchUserStatus(hub: DaemonHubInfo) async throws -> (UserProfileInfo?, [QuotaPoolGroup], [String: String]) {
+    static func effectiveRemainingFraction(
+        fraction: Double?,
+        resetTimeISO: String?,
+        hasQuotaInfo: Bool
+    ) -> Double? {
+        if let fraction {
+            return fraction
+        }
+        if hasQuotaInfo,
+           let resetTimeISO,
+           !resetTimeISO.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return 0.0
+        }
+        return nil
+    }
+
+    func fetchUserStatus(hub: DaemonHubInfo, lang: AppLanguage = L10n.current) async throws -> (UserProfileInfo?, [QuotaPoolGroup], [String: String]) {
         let resp: GetUserStatusResponse = try await callRPC("GetUserStatus", body: EmptyRequest(), hub: hub)
         let u = resp.userStatus
         let profile = u.map {
@@ -137,11 +153,16 @@ final class LanguageServerClient {
                 }
                 let resetISO = cfg.quotaInfo?.resetTime
                 let resetDate = resetISO.flatMap { Self.parseISO8601($0) }
+                let effectiveFrac = Self.effectiveRemainingFraction(
+                    fraction: cfg.quotaInfo?.remainingFraction,
+                    resetTimeISO: resetISO,
+                    hasQuotaInfo: cfg.quotaInfo != nil
+                )
                 quotaItems.append(ModelQuotaItem(
                     id: "\(modelId)|\(label)",
                     label: label,
                     modelId: modelId,
-                    remainingFraction: cfg.quotaInfo?.remainingFraction,
+                    remainingFraction: effectiveFrac,
                     resetTime: resetDate,
                     resetTimeISO: resetISO,
                     tagTitle: cfg.tagTitle
@@ -149,7 +170,7 @@ final class LanguageServerClient {
             }
         }
 
-        let groups = Self.groupQuotaPools(items: quotaItems)
+        let groups = Self.groupQuotaPools(items: quotaItems, lang: lang)
         return (profile, groups, modelLabels)
     }
 
@@ -253,7 +274,7 @@ final class LanguageServerClient {
         throw lastError
     }
 
-    static func groupQuotaPools(items: [ModelQuotaItem]) -> [QuotaPoolGroup] {
+    static func groupQuotaPools(items: [ModelQuotaItem], lang: AppLanguage = L10n.current) -> [QuotaPoolGroup] {
         var buckets: [String: [ModelQuotaItem]] = [:]
         var orderedKeys: [String] = []
 
@@ -273,7 +294,7 @@ final class LanguageServerClient {
             guard let groupItems = buckets[key], let first = groupItems.first, let frac = first.remainingFraction else {
                 return nil
             }
-            let title = summarizeGroupTitle(groupItems)
+            let title = summarizeGroupTitle(groupItems, lang: lang)
             return QuotaPoolGroup(
                 id: key,
                 title: title,
@@ -284,7 +305,7 @@ final class LanguageServerClient {
         }
     }
 
-    private static func summarizeGroupTitle(_ items: [ModelQuotaItem]) -> String {
+    private static func summarizeGroupTitle(_ items: [ModelQuotaItem], lang: AppLanguage) -> String {
         var families: [String] = []
         for item in items {
             let label = item.label
@@ -294,7 +315,7 @@ final class LanguageServerClient {
                 families.append(base)
             }
         }
-        if families.isEmpty { return L10n.t("模型配额池", "Model Quota Pool") }
+        if families.isEmpty { return L10n.t("模型配额池", "Model Quota Pool", lang) }
         if families.count <= 2 {
             return families.joined(separator: " / ")
         }
@@ -302,7 +323,8 @@ final class LanguageServerClient {
             zhHans: "\(families.prefix(2).joined(separator: " / ")) 等 \(families.count) 个模型",
             zhHant: "\(families.prefix(2).joined(separator: " / ")) 等 \(families.count) 個模型",
             en: "\(families.prefix(2).joined(separator: " / ")) +\(families.count - 2) more",
-            ru: "\(families.prefix(2).joined(separator: " / ")) и ещё \(families.count - 2)"
+            ru: "\(families.prefix(2).joined(separator: " / ")) и ещё \(families.count - 2)",
+            lang
         )
     }
 

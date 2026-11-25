@@ -25,7 +25,6 @@
 #define FAKE_NET_END   0xC613FFFEu
 #define MAX_MAPS 4096
 #define MAX_HOST 255
-#define MAX_OWNED_AI 4096
 #define MAX_BYPASS_RULES 64
 #define DEFAULT_NO_PROXY_LIST "localhost,127.0.0.1,::1,127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,*.local,<local>"
 
@@ -39,10 +38,10 @@ struct cidr_rule {
   uint32_t mask_host_order;
 };
 
-static pthread_mutex_t config_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_once_t config_once = PTHREAD_ONCE_INIT;
 static pthread_mutex_t map_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t owned_ai_lock = PTHREAD_MUTEX_INITIALIZER;
-static int config_loaded;
+static pthread_mutex_t serv_lock = PTHREAD_MUTEX_INITIALIZER;
 static int log_enabled;
 static int timeout_ms = 15000;
 static char proxy_host[MAX_HOST + 1] = "127.0.0.1";
@@ -50,9 +49,11 @@ static int proxy_port = 7890;
 static uint32_t next_fake_host_order = FAKE_NET_START;
 static struct host_map maps[MAX_MAPS];
 static size_t map_count;
+static size_t map_next;
 
-static struct addrinfo *owned_ai_ptrs[MAX_OWNED_AI];
-static size_t owned_ai_count;
+static struct addrinfo **owned_ai_ptrs = NULL;
+static size_t owned_ai_count = 0;
+static size_t owned_ai_cap = 0;
 static _Thread_local int in_getaddrinfo_bypass = 0;
 
 static int proxy_addr_family = AF_UNSPEC;
@@ -161,15 +162,26 @@ static void log_msg(const char *fmt, ...) {
   va_end(ap);
 }
 
-static void register_owned_addrinfo(struct addrinfo *ai) {
+static int register_owned_addrinfo(struct addrinfo *ai) {
   if (!ai) {
-    return;
+    return 0;
   }
+  int ok = 0;
   pthread_mutex_lock(&owned_ai_lock);
-  if (owned_ai_count < MAX_OWNED_AI) {
+  if (owned_ai_count == owned_ai_cap) {
+    size_t new_cap = owned_ai_cap == 0 ? 256 : owned_ai_cap * 2;
+    struct addrinfo **grown = realloc(owned_ai_ptrs, new_cap * sizeof(*owned_ai_ptrs));
+    if (grown) {
+      owned_ai_ptrs = grown;
+      owned_ai_cap = new_cap;
+    }
+  }
+  if (owned_ai_count < owned_ai_cap) {
     owned_ai_ptrs[owned_ai_count++] = ai;
+    ok = 1;
   }
   pthread_mutex_unlock(&owned_ai_lock);
+  return ok;
 }
 
 static int unregister_owned_addrinfo(struct addrinfo *ai) {
@@ -410,24 +422,28 @@ static void parse_proxy_url(const char *value) {
   memcpy(host_port, p, len);
   host_port[len] = '\0';
 
-  char *colon = strrchr(host_port, ':');
-  if (!colon || !colon[1]) {
-    return;
-  }
-
-  *colon = '\0';
-  int port = atoi(colon + 1);
-  if (port <= 0 || port > 65535 || host_port[0] == '\0') {
-    return;
-  }
-
   char *host_part = host_port;
-  size_t hlen = strlen(host_part);
-  if (hlen >= 2 && host_part[0] == '[' && host_part[hlen - 1] == ']') {
-    host_part[hlen - 1] = '\0';
+  char *port_str = NULL;
+  if (host_part[0] == '[') {
+    char *close_br = strchr(host_part, ']');
+    if (!close_br || close_br[1] != ':' || !close_br[2]) {
+      return;
+    }
+    *close_br = '\0';
     host_part++;
+    port_str = close_br + 2;
+  } else {
+    char *colon = strrchr(host_part, ':');
+    if (!colon || !colon[1]) {
+      return;
+    }
+    *colon = '\0';
+    port_str = colon + 1;
   }
-  if (!host_part[0]) {
+
+  char *end = NULL;
+  long port = strtol(port_str, &end, 10);
+  if (!end || *end != '\0' || port <= 0 || port > 65535 || host_part[0] == '\0') {
     return;
   }
 
@@ -436,16 +452,10 @@ static void parse_proxy_url(const char *value) {
   } else {
     snprintf(proxy_host, sizeof(proxy_host), "%s", host_part);
   }
-  proxy_port = port;
+  proxy_port = (int)port;
 }
 
-static void load_config(void) {
-  pthread_mutex_lock(&config_lock);
-  if (config_loaded) {
-    pthread_mutex_unlock(&config_lock);
-    return;
-  }
-
+static void load_config_impl(void) {
   const char *proxy = getenv("AG_PROXY");
   if (!proxy || !proxy[0]) {
     proxy = getenv("ALL_PROXY");
@@ -485,16 +495,18 @@ static void load_config(void) {
     }
   }
 
-  config_loaded = 1;
   log_msg("loaded proxy %s:%d (cidr=%zu domains=%zu v6=%zu)", proxy_host, proxy_port, cidr_rule_count, bypass_domain_count, bypass_ip_v6_count);
-  pthread_mutex_unlock(&config_lock);
+}
+
+static void load_config(void) {
+  pthread_once(&config_once, load_config_impl);
 }
 
 static int is_localhost_name(const char *host) {
   if (!host) {
     return 0;
   }
-  return !strcmp(host, "localhost") || !strcmp(host, "127.0.0.1") || !strcmp(host, "::1");
+  return !strcasecmp(host, "localhost") || !strcmp(host, "127.0.0.1") || !strcmp(host, "::1");
 }
 
 static int is_numeric_host(const char *host) {
@@ -503,22 +515,42 @@ static int is_numeric_host(const char *host) {
   return inet_pton(AF_INET, host, &a4) == 1 || inet_pton(AF_INET6, host, &a6) == 1;
 }
 
+static int is_scoped_ipv6_host(const char *host) {
+  if (!host) {
+    return 0;
+  }
+  const char *pct = strchr(host, '%');
+  if (!pct || pct == host) {
+    return 0;
+  }
+  size_t prefix_len = (size_t)(pct - host);
+  if (prefix_len >= INET6_ADDRSTRLEN) {
+    return 0;
+  }
+  char prefix[INET6_ADDRSTRLEN];
+  memcpy(prefix, host, prefix_len);
+  prefix[prefix_len] = '\0';
+  struct in6_addr a6;
+  return inet_pton(AF_INET6, prefix, &a6) == 1;
+}
+
 static int is_fake_ip_be(uint32_t ip_be) {
   uint32_t ip = ntohl(ip_be);
   return ip >= FAKE_NET_START && ip <= FAKE_NET_END;
 }
 
-static const char *lookup_host_by_ip(uint32_t ip_be) {
-  const char *result = NULL;
+static int lookup_host_by_ip(uint32_t ip_be, char *out_host, size_t out_size) {
+  int found = 0;
   pthread_mutex_lock(&map_lock);
   for (size_t i = 0; i < map_count; i++) {
     if (maps[i].ip_be == ip_be) {
-      result = maps[i].host;
+      snprintf(out_host, out_size, "%s", maps[i].host);
+      found = 1;
       break;
     }
   }
   pthread_mutex_unlock(&map_lock);
-  return result;
+  return found;
 }
 
 static uint32_t fake_ip_for_host(const char *host) {
@@ -526,21 +558,26 @@ static uint32_t fake_ip_for_host(const char *host) {
 
   pthread_mutex_lock(&map_lock);
   for (size_t i = 0; i < map_count; i++) {
-    if (!strcmp(maps[i].host, host)) {
+    if (!strcasecmp(maps[i].host, host)) {
       result = maps[i].ip_be;
       break;
     }
   }
 
-  if (!result && map_count < MAX_MAPS) {
+  if (!result) {
     if (next_fake_host_order > FAKE_NET_END) {
       next_fake_host_order = FAKE_NET_START;
     }
+    size_t slot;
+    if (map_count < MAX_MAPS) {
+      slot = map_count++;
+    } else {
+      slot = map_next;
+      map_next = (map_next + 1) % MAX_MAPS;
+    }
     result = htonl(next_fake_host_order++);
-    maps[map_count].ip_be = result;
-    strncpy(maps[map_count].host, host, MAX_HOST);
-    maps[map_count].host[MAX_HOST] = '\0';
-    map_count++;
+    maps[slot].ip_be = result;
+    str_tolower_copy(maps[slot].host, sizeof(maps[slot].host), host);
   }
   pthread_mutex_unlock(&map_lock);
 
@@ -562,7 +599,14 @@ static int parse_service_port(const char *service) {
   if (!strcmp(service, "https")) {
     return 443;
   }
-  return 0;
+  int resolved = 0;
+  pthread_mutex_lock(&serv_lock);
+  struct servent *se = getservbyname(service, "tcp");
+  if (se) {
+    resolved = ntohs((uint16_t)se->s_port);
+  }
+  pthread_mutex_unlock(&serv_lock);
+  return resolved;
 }
 
 static int make_addrinfo_v4(const char *canon, uint32_t ip_be, int port, const struct addrinfo *hints, struct addrinfo **res) {
@@ -593,45 +637,21 @@ static int make_addrinfo_v4(const char *canon, uint32_t ip_be, int port, const s
     }
   }
 
-  register_owned_addrinfo(ai);
-  *res = ai;
-  return 0;
-}
-
-static int make_addrinfo_v6(const char *canon, const struct in6_addr *ip, int port, const struct addrinfo *hints, struct addrinfo **res) {
-  struct addrinfo *ai = calloc(1, sizeof(*ai));
-  struct sockaddr_in6 *sa = calloc(1, sizeof(*sa));
-  if (!ai || !sa) {
-    free(ai);
+  if (!register_owned_addrinfo(ai)) {
+    free(ai->ai_canonname);
     free(sa);
+    free(ai);
     return EAI_MEMORY;
   }
-
-  sa->sin6_family = AF_INET6;
-  sa->sin6_port = htons((uint16_t)port);
-  memcpy(&sa->sin6_addr, ip, sizeof(*ip));
-
-  ai->ai_family = AF_INET6;
-  ai->ai_socktype = hints ? hints->ai_socktype : 0;
-  ai->ai_protocol = hints ? hints->ai_protocol : 0;
-  ai->ai_addrlen = sizeof(*sa);
-  ai->ai_addr = (struct sockaddr *)sa;
-
-  if (canon && hints && (hints->ai_flags & AI_CANONNAME)) {
-    ai->ai_canonname = strdup(canon);
-    if (!ai->ai_canonname) {
-      free(sa);
-      free(ai);
-      return EAI_MEMORY;
-    }
-  }
-
-  register_owned_addrinfo(ai);
   *res = ai;
   return 0;
 }
 
 static int make_fake_addrinfo(const char *node, const char *service, const struct addrinfo *hints, struct addrinfo **res) {
+  if (hints && hints->ai_family == AF_INET6) {
+    return EAI_NONAME;
+  }
+
   uint32_t ip_be = fake_ip_for_host(node);
   if (!ip_be) {
     return EAI_MEMORY;
@@ -649,44 +669,6 @@ static int make_fake_addrinfo(const char *node, const char *service, const struc
     log_msg("dns %s -> %s", node, fake_str);
   }
   return 0;
-}
-
-static int make_direct_addrinfo(const char *node, const char *service, const struct addrinfo *hints, struct addrinfo **res) {
-  int family = hints ? hints->ai_family : AF_UNSPEC;
-  int port = parse_service_port(service);
-  int passive = hints && (hints->ai_flags & AI_PASSIVE);
-  const char *name = node && node[0] ? node : NULL;
-
-  struct in_addr a4;
-  struct in6_addr a6;
-
-  if (!name || !strcmp(name, "localhost")) {
-    if (family == AF_INET6) {
-      a6 = passive ? in6addr_any : in6addr_loopback;
-      return make_addrinfo_v6(name, &a6, port, hints, res);
-    }
-    if (family == AF_UNSPEC || family == AF_INET) {
-      a4.s_addr = htonl(passive ? INADDR_ANY : INADDR_LOOPBACK);
-      return make_addrinfo_v4(name, a4.s_addr, port, hints, res);
-    }
-    return EAI_NONAME;
-  }
-
-  if (inet_pton(AF_INET, name, &a4) == 1) {
-    if (family == AF_UNSPEC || family == AF_INET) {
-      return make_addrinfo_v4(name, a4.s_addr, port, hints, res);
-    }
-    return EAI_NONAME;
-  }
-
-  if (inet_pton(AF_INET6, name, &a6) == 1) {
-    if (family == AF_UNSPEC || family == AF_INET6) {
-      return make_addrinfo_v6(name, &a6, port, hints, res);
-    }
-    return EAI_NONAME;
-  }
-
-  return EAI_NONAME;
 }
 
 static int set_blocking(int fd, int *old_flags) {
@@ -787,7 +769,7 @@ static int connect_to_proxy(int fd) {
 }
 
 static int socks5_read_reply_tail(int fd, uint8_t atyp) {
-  uint8_t skip[256];
+  uint8_t skip[258];
   size_t len;
 
   if (atyp == 0x01) {
@@ -912,7 +894,7 @@ static int target_is_proxy(const struct sockaddr *addr) {
       return 1;
     }
     uint32_t ip = ntohl(sin->sin_addr.s_addr);
-    return (proxy_addr_family == AF_UNSPEC || ip == 0x7F000001u) && ip == 0x7F000001u;
+    return proxy_addr_family == AF_UNSPEC && ip == 0x7F000001u;
   }
   if (addr->sa_family == AF_INET6) {
     const struct sockaddr_in6 *sin6 = (const struct sockaddr_in6 *)addr;
@@ -948,6 +930,9 @@ static int target_is_bypass_ip(const struct sockaddr *addr) {
     if (is_fake_ip_be(sin->sin_addr.s_addr)) {
       return 0;
     }
+    if (bypass_all) {
+      return 1;
+    }
     if (is_recorded_bypass_v4(sin->sin_addr.s_addr)) {
       return 1;
     }
@@ -958,6 +943,9 @@ static int target_is_bypass_ip(const struct sockaddr *addr) {
     return ip_matches_no_proxy_cidr(ip);
   }
   if (addr->sa_family == AF_INET6) {
+    if (bypass_all) {
+      return 1;
+    }
     const struct sockaddr_in6 *sin6 = (const struct sockaddr_in6 *)addr;
     if (is_recorded_bypass_v6(&sin6->sin6_addr)) {
       return 1;
@@ -976,11 +964,30 @@ static int socket_is_stream(int fd) {
   return type == SOCK_STREAM;
 }
 
+static void save_socket_timeouts(int fd, struct timeval *old_rcv, int *has_rcv, struct timeval *old_snd, int *has_snd) {
+  socklen_t len = sizeof(*old_rcv);
+  *has_rcv = (getsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, old_rcv, &len) == 0 && len == sizeof(*old_rcv));
+  len = sizeof(*old_snd);
+  *has_snd = (getsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, old_snd, &len) == 0 && len == sizeof(*old_snd));
+}
+
+static void restore_socket_timeouts(int fd, const struct timeval *old_rcv, int has_rcv, const struct timeval *old_snd, int has_snd) {
+  if (has_rcv) {
+    (void)setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, old_rcv, sizeof(*old_rcv));
+  }
+  if (has_snd) {
+    (void)setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, old_snd, sizeof(*old_snd));
+  }
+}
+
 static int proxy_connect(int fd, const struct sockaddr *addr) {
   int old_flags = -1;
   int saved_errno;
   uint16_t port = 0;
-  const char *fake_host = NULL;
+  char fake_host_buf[MAX_HOST + 1];
+  int has_fake_host = 0;
+  struct timeval old_rcv, old_snd;
+  int has_old_rcv = 0, has_old_snd = 0;
 
   if (!socket_is_stream(fd)) {
     errno = EPROTOTYPE;
@@ -992,10 +999,12 @@ static int proxy_connect(int fd, const struct sockaddr *addr) {
   if (set_blocking(fd, &old_flags) != 0) {
     return -1;
   }
+  save_socket_timeouts(fd, &old_rcv, &has_old_rcv, &old_snd, &has_old_snd);
   set_socket_timeout(fd);
 
   if (connect_to_proxy(fd) != 0) {
     saved_errno = errno;
+    restore_socket_timeouts(fd, &old_rcv, has_old_rcv, &old_snd, has_old_snd);
     restore_flags(fd, old_flags);
     errno = saved_errno;
     return -1;
@@ -1005,20 +1014,21 @@ static int proxy_connect(int fd, const struct sockaddr *addr) {
     const struct sockaddr_in *sin = (const struct sockaddr_in *)addr;
     port = ntohs(sin->sin_port);
     if (is_fake_ip_be(sin->sin_addr.s_addr)) {
-      fake_host = lookup_host_by_ip(sin->sin_addr.s_addr);
+      has_fake_host = lookup_host_by_ip(sin->sin_addr.s_addr, fake_host_buf, sizeof(fake_host_buf));
     }
   }
 
   int rc;
-  if (fake_host) {
-    log_msg("connect %s:%u via %s:%d", fake_host, port, proxy_host, proxy_port);
-    rc = socks5_connect_domain(fd, fake_host, port);
+  if (has_fake_host) {
+    log_msg("connect %s:%u via %s:%d", fake_host_buf, port, proxy_host, proxy_port);
+    rc = socks5_connect_domain(fd, fake_host_buf, port);
   } else {
     log_msg("connect ip via %s:%d", proxy_host, proxy_port);
     rc = socks5_connect_ip(fd, addr);
   }
 
   saved_errno = errno;
+  restore_socket_timeouts(fd, &old_rcv, has_old_rcv, &old_snd, has_old_snd);
   restore_flags(fd, old_flags);
   errno = saved_errno;
   return rc;
@@ -1056,11 +1066,20 @@ static int ag_getaddrinfo(const char *node, const char *service, const struct ad
   }
   *res = NULL;
 
-  if (!node || !node[0] || is_localhost_name(node) || is_numeric_host(node)) {
-    return make_direct_addrinfo(node, service, hints, res);
+  if (!node || !node[0] || is_localhost_name(node) || is_numeric_host(node) || is_scoped_ipv6_host(node)) {
+    in_getaddrinfo_bypass = 1;
+    int rc = getaddrinfo(node, service, hints, res);
+    in_getaddrinfo_bypass = 0;
+    return rc;
   }
-  if (!strcmp(node, proxy_host)) {
-    return make_direct_addrinfo(node, service, hints, res);
+  if (!strcasecmp(node, proxy_host)) {
+    in_getaddrinfo_bypass = 1;
+    int rc = getaddrinfo(node, service, hints, res);
+    in_getaddrinfo_bypass = 0;
+    if (rc == 0 && *res && !is_numeric_host(node)) {
+      record_bypass_addrinfo(*res);
+    }
+    return rc;
   }
   if (host_matches_no_proxy(node)) {
     log_msg("dns bypass %s via system resolver", node);

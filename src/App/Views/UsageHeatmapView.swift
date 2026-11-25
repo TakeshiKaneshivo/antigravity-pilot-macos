@@ -236,8 +236,8 @@ struct UsageHeatmapView: View {
                         .gesture(
                             DragGesture(minimumDistance: 0)
                                 .onEnded { value in
-                                    let col = Int((value.location.x - originX) / (cellSize + spacing))
-                                    let row = Int(value.location.y / (cellSize + spacing))
+                                    let col = Int(floor((value.location.x - originX) / (cellSize + spacing)))
+                                    let row = Int(floor(value.location.y / (cellSize + spacing)))
                                     if col >= 0, col < cols, row >= 0, row < rows,
                                        let cell = grid.weeks[col][row] {
                                         selectedDateKey = cell.dateKey

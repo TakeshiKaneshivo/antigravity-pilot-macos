@@ -10,13 +10,17 @@ LEGACY_RUNTIME_APP_PATH="$HOME/Library/Application Support/Antigravity Proxy/Run
 patterns=(
   "$APP_PATH/Contents/MacOS/AntigravityProxyLauncher"
   "$APP_PATH/Contents/MacOS/Antigravity"
+  "$APP_PATH/Contents/Frameworks/Antigravity Helper"
   "$LEGACY_APP_PATH/Contents/MacOS/AntigravityProxyLauncher"
   "$LEGACY_APP_PATH/Contents/MacOS/Antigravity"
+  "$LEGACY_APP_PATH/Contents/Frameworks/Antigravity Helper"
   "$LEGACY_APP_PATH/Contents/Resources/Antigravity.app"
   "$RUNTIME_APP_PATH/Contents/MacOS/AntigravityProxyLauncher"
   "$RUNTIME_APP_PATH/Contents/MacOS/Antigravity"
+  "$RUNTIME_APP_PATH/Contents/Frameworks/Antigravity Helper"
   "$LEGACY_RUNTIME_APP_PATH/Contents/MacOS/AntigravityProxyLauncher"
   "$LEGACY_RUNTIME_APP_PATH/Contents/MacOS/Antigravity"
+  "$LEGACY_RUNTIME_APP_PATH/Contents/Frameworks/Antigravity Helper"
   "$LEGACY_RUNTIME_APP_PATH/Contents/Resources/Antigravity.app"
 )
 

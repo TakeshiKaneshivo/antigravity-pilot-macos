@@ -54,7 +54,7 @@ final class StdoutWriter: @unchecked Sendable {
         line.append(0x0A)
         lock.lock()
         defer { lock.unlock() }
-        handle.write(line)
+        try? handle.write(contentsOf: line)
     }
 
     func logStderr(_ message: String) {
@@ -62,7 +62,7 @@ final class StdoutWriter: @unchecked Sendable {
         if let data = line.data(using: .utf8) {
             lock.lock()
             defer { lock.unlock() }
-            FileHandle.standardError.write(data)
+            try? FileHandle.standardError.write(contentsOf: data)
         }
     }
 }
@@ -121,12 +121,15 @@ final class MCPStdioServer {
                 let trimmed = trimLine(lineData)
                 guard !trimmed.isEmpty else { continue }
 
-                let taskId = UUID()
-                await tracker.insert(taskId)
-
-                Task.detached(priority: .userInitiated) { [handler, writer, tracker] in
+                if Self.shouldRunConcurrently(trimmed) {
+                    let taskId = UUID()
+                    await tracker.insert(taskId)
+                    Task.detached(priority: .userInitiated) { [handler, writer, tracker] in
+                        await Self.processLine(trimmed, handler: handler, writer: writer)
+                        await tracker.remove(taskId)
+                    }
+                } else {
                     await Self.processLine(trimmed, handler: handler, writer: writer)
-                    await tracker.remove(taskId)
                 }
             }
         }
@@ -152,6 +155,16 @@ final class MCPStdioServer {
             slice.removeFirst()
         }
         return slice
+    }
+
+    private static func shouldRunConcurrently(_ data: Data) -> Bool {
+        guard let obj = try? JSONSerialization.jsonObject(with: data, options: []) as? [String: Any],
+              let method = obj["method"] as? String else {
+            return false
+        }
+        let requestId = obj["id"]
+        let isNotification = (requestId == nil || requestId is NSNull)
+        return !isNotification && method == "tools/call"
     }
 
     private static func processLine(_ data: Data, handler: MCPServiceHandling, writer: StdoutWriter) async {

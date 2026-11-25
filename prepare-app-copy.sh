@@ -92,7 +92,7 @@ cp "$ROOT/build/libantigravity_proxy.dylib" "$DEST_APP/Contents/Resources/libant
 SOURCE_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$SOURCE_APP/Contents/Info.plist" 2>/dev/null || true)"
 cat >"$DEST_APP/Contents/Resources/proxy.env" <<EOF
 AG_PROXY=$PROXY_URL
-AG_PROXY_LOG=1
+AG_PROXY_LOG=0
 AG_PROXY_TIMEOUT_MS=15000
 HTTP_PROXY=$ENV_PROXY_URL
 HTTPS_PROXY=$ENV_PROXY_URL
@@ -199,8 +199,9 @@ set_helper_icon_and_id "Antigravity Helper (GPU).app" "com.google.antigravity.pi
 set_helper_icon_and_id "Antigravity Helper (Plugin).app" "com.google.antigravity.pilot.runtime.helper.Plugin"
 set_helper_icon_and_id "Antigravity Helper (Renderer).app" "com.google.antigravity.pilot.runtime.helper.Renderer"
 
-ENTITLEMENTS="$ROOT/build/antigravity-pilot.entitlements.plist"
-RAW_ENTITLEMENTS="$(codesign -d --entitlements - --xml "$SOURCE_APP" 2>&1 || true)"
+ENTITLEMENTS="$(mktemp "${TMPDIR:-/tmp}/antigravity-pilot-entitlements.XXXXXX.plist")"
+trap 'rm -f "$ENTITLEMENTS"' EXIT
+RAW_ENTITLEMENTS="$(codesign -d --entitlements - --xml "$SOURCE_APP" 2>/dev/null || true)"
 if [[ "$RAW_ENTITLEMENTS" == *"<?xml"* || "$RAW_ENTITLEMENTS" == *"<plist"* ]]; then
   if [[ "$RAW_ENTITLEMENTS" == *"<?xml"* ]]; then
     XML_BODY="<?xml${RAW_ENTITLEMENTS#*<?xml}"

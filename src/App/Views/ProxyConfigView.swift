@@ -469,10 +469,10 @@ struct ProxyConfigView: View {
 
             healthStepRow(
                 title: L10n.t(
-                    zhHans: "1. 本地 TCP 端口 (\(appModel.config.host):\(appModel.config.hookPort))",
-                    zhHant: "1. 本機 TCP 連接埠 (\(appModel.config.host):\(appModel.config.hookPort))",
-                    en: "1. Local TCP Port (\(appModel.config.host):\(appModel.config.hookPort))",
-                    ru: "1. Локальный TCP порт (\(appModel.config.host):\(appModel.config.hookPort))",
+                    zhHans: "1. 本地 TCP 端口 (\(appModel.config.displayHookHostPort))",
+                    zhHant: "1. 本機 TCP 連接埠 (\(appModel.config.displayHookHostPort))",
+                    en: "1. Local TCP Port (\(appModel.config.displayHookHostPort))",
+                    ru: "1. Локальный TCP порт (\(appModel.config.displayHookHostPort))",
                     lang
                 ),
                 passed: appModel.healthReport.tcpReachable
@@ -487,10 +487,10 @@ struct ProxyConfigView: View {
             )
             healthStepRow(
                 title: L10n.t(
-                    zhHans: "环境变量端口 (\(appModel.config.envScheme)://\(appModel.config.host):\(appModel.config.envPort))",
-                    zhHant: "環境變數連接埠 (\(appModel.config.envScheme)://\(appModel.config.host):\(appModel.config.envPort))",
-                    en: "ENV Proxy Port (\(appModel.config.envScheme)://\(appModel.config.host):\(appModel.config.envPort))",
-                    ru: "Порт ENV прокси (\(appModel.config.envScheme)://\(appModel.config.host):\(appModel.config.envPort))",
+                    zhHans: "环境变量端口 (\(appModel.config.envProxyURL))",
+                    zhHant: "環境變數連接埠 (\(appModel.config.envProxyURL))",
+                    en: "ENV Proxy Port (\(appModel.config.envProxyURL))",
+                    ru: "Порт ENV прокси (\(appModel.config.envProxyURL))",
                     lang
                 ),
                 passed: appModel.healthReport.envPortReachable

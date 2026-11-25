@@ -137,7 +137,8 @@ interface UsageHistoryDTO {
 interface AppState {
   activeTab: TabKey;
   selectedPeriod: PeriodKey;
-  selectedCascadeId: string | null;
+  pinnedCascadeId: string | null;
+  displayedCascadeId: string | null;
   selectedHeatmapDate: string | null;
   hoveredBarDate: string | null;
   showNoProxy: boolean;
@@ -181,7 +182,8 @@ function saveCollapsedCards(cards: Set<string>): void {
 const state: AppState = {
   activeTab: 'monitor',
   selectedPeriod: 'days30',
-  selectedCascadeId: null,
+  pinnedCascadeId: null,
+  displayedCascadeId: null,
   selectedHeatmapDate: null,
   hoveredBarDate: null,
   showNoProxy: false,
@@ -234,7 +236,9 @@ function collapseChevron(cardId: string, collapsed: boolean): string {
 
 const app = new App({ name: 'Antigravity Pilot', version: '0.1.0' }, {});
 
-function applyTheme(theme?: string, variables?: Record<string, string>) {
+type HostStyleVariables = Parameters<typeof applyHostStyleVariables>[0];
+
+function applyTheme(theme?: string, variables?: HostStyleVariables) {
   if (theme) {
     applyDocumentTheme(theme as 'light' | 'dark');
     document.documentElement.setAttribute('data-theme', theme);
@@ -246,8 +250,8 @@ function applyTheme(theme?: string, variables?: Record<string, string>) {
 
 app.ontoolinput = ({ arguments: args }) => {
   if (args && typeof args === 'object') {
-    if (typeof args.cascadeId === 'string') {
-      state.selectedCascadeId = args.cascadeId;
+    if (typeof args.cascadeId === 'string' && args.cascadeId) {
+      state.pinnedCascadeId = args.cascadeId;
     }
     if (typeof args.period === 'string' && ['today', 'days7', 'days30', 'all'].includes(args.period)) {
       state.selectedPeriod = args.period as PeriodKey;
@@ -266,9 +270,7 @@ app.ontoolresult = (result) => {
   }
   if (sc.live && typeof sc.live === 'object') {
     state.live = sc.live as LiveSnapshotDTO;
-    if (state.live.selectedCascadeId) {
-      state.selectedCascadeId = state.live.selectedCascadeId;
-    }
+    state.displayedCascadeId = state.live.selectedCascadeId ?? null;
   }
   if (sc.usage && typeof sc.usage === 'object') {
     state.usage = sc.usage as UsageHistoryDTO;
@@ -280,7 +282,7 @@ app.ontoolresult = (result) => {
 };
 
 app.onhostcontextchanged = (ctx) => {
-  applyTheme(ctx.theme, ctx.styles?.variables as Record<string, string> | undefined);
+  applyTheme(ctx.theme, ctx.styles?.variables);
 };
 
 async function callServerToolSafe(name: string, args: Record<string, unknown>): Promise<Record<string, unknown> | null> {
@@ -312,16 +314,14 @@ async function refreshLive(includeInternetCheck: boolean, force = false) {
   state.isRefreshingLive = true;
   render();
   const data = await callServerToolSafe('pilot_get_live_snapshot', {
-    ...(state.selectedCascadeId ? { cascadeId: state.selectedCascadeId } : {}),
+    ...(state.pinnedCascadeId ? { cascadeId: state.pinnedCascadeId } : {}),
     includeInternetCheck,
   });
   if (seq !== state.liveRequestSeq) return;
   state.isRefreshingLive = false;
   if (data) {
     state.live = data as unknown as LiveSnapshotDTO;
-    if (state.live.selectedCascadeId) {
-      state.selectedCascadeId = state.live.selectedCascadeId;
-    }
+    state.displayedCascadeId = state.live.selectedCascadeId ?? null;
   }
   render();
 }
@@ -367,6 +367,7 @@ function compactTokens(n: number): string {
 }
 
 function compactTokensShort(n: number): string {
+  if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(1)}B`;
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${Math.round(n / 1_000)}K`;
   return String(Math.max(0, Math.round(n)));
@@ -532,9 +533,11 @@ function renderContextCard(live: LiveSnapshotDTO | null): string {
   }
 
   const sessions = live.sessions ?? [];
+  const autoLabel = `${tr('自动（最新会话）', 'Auto (Latest)')}${sessions[0] ? ` · ${sessions[0].title}` : ''}`;
   const selectHtml = sessions.length > 0
     ? `<select class="select" data-action="select-session">
-        ${sessions.map((s) => `<option value="${escapeHtml(s.id)}" ${s.id === state.selectedCascadeId ? 'selected' : ''}>${escapeHtml(s.title)}</option>`).join('')}
+        <option value="" ${!state.pinnedCascadeId ? 'selected' : ''}>${escapeHtml(autoLabel)}</option>
+        ${sessions.map((s) => `<option value="${escapeHtml(s.id)}" ${s.id === state.pinnedCascadeId ? 'selected' : ''}>${escapeHtml(s.title)}</option>`).join('')}
       </select>`
     : '';
 
@@ -890,7 +893,7 @@ function renderUsageTab(usage: UsageHistoryDTO | null): string {
             ${collapseChevron('daily', dailyCollapsed)}
             <h3 class="card-title">${tr('近 14 日 Token 趋势', '14-Day Token Trend')}</h3>
           </div>
-          <span class="muted">
+          <span class="muted" data-daily-detail>
             ${hoveredDay
               ? `${hoveredDay.dateKey} · ${compactTokens(hoveredDay.totalTokens)} · ${formatUSD(hoveredDay.estimatedCostUSD)}`
               : tr('悬停或点击柱条查看当日详情', 'Hover or click a bar for details')}
@@ -972,14 +975,38 @@ function renderModelBreakdown(models: ModelUsageDTO[]): string {
   if (models.length === 0) {
     return `<div class="muted">${tr('所选周期暂无模型调用记录。', 'No model usage recorded in this period.')}</div>`;
   }
-  const top6 = models.slice(0, 6);
-  const sumTop6 = Math.max(1, top6.reduce((acc, m) => acc + Math.max(1, m.totalTokens), 0));
+
+  let displayed: ModelUsageDTO[];
+  if (models.length <= 6) {
+    displayed = models;
+  } else {
+    const top5 = models.slice(0, 5);
+    const rest = models.slice(5);
+    const others: ModelUsageDTO = {
+      modelKey: '__others__',
+      displayName: tr4(
+        `其他 (${rest.length})`,
+        `其他 (${rest.length})`,
+        `Others (${rest.length})`,
+        `Прочие (${rest.length})`
+      ),
+      inputTokens: rest.reduce((acc, m) => acc + m.inputTokens, 0),
+      cacheReadTokens: rest.reduce((acc, m) => acc + m.cacheReadTokens, 0),
+      outputTokens: rest.reduce((acc, m) => acc + m.outputTokens, 0),
+      totalTokens: rest.reduce((acc, m) => acc + m.totalTokens, 0),
+      requestCount: rest.reduce((acc, m) => acc + m.requestCount, 0),
+      estimatedCostUSD: rest.reduce((acc, m) => acc + m.estimatedCostUSD, 0),
+    };
+    displayed = [...top5, others];
+  }
+
+  const sumDisplayed = Math.max(1, displayed.reduce((acc, m) => acc + Math.max(1, m.totalTokens), 0));
   const r = 42;
   const circ = 2 * Math.PI * r;
   let offset = 0;
 
-  const slices = top6.map((m, idx) => {
-    const frac = Math.max(1, m.totalTokens) / sumTop6;
+  const slices = displayed.map((m, idx) => {
+    const frac = Math.max(1, m.totalTokens) / sumDisplayed;
     const len = frac * circ;
     const strokeDash = `${Math.max(1, len - 2).toFixed(2)} ${(circ - Math.max(1, len - 2)).toFixed(2)}`;
     const seg = `<circle cx="58" cy="58" r="${r}" fill="none" stroke="${PALETTE[idx % PALETTE.length]}" stroke-width="16" stroke-dasharray="${strokeDash}" stroke-dashoffset="${(-offset).toFixed(2)}" transform="rotate(-90 58 58)" />`;
@@ -987,8 +1014,8 @@ function renderModelBreakdown(models: ModelUsageDTO[]): string {
     return seg;
   }).join('');
 
-  const maxTokens = Math.max(1, ...models.map((m) => m.totalTokens));
-  const rows = models.slice(0, 8).map((m, idx) => {
+  const maxTokens = Math.max(1, ...displayed.map((m) => m.totalTokens));
+  const rows = displayed.map((m, idx) => {
     const pct = Math.max(2, (m.totalTokens / maxTokens) * 100);
     const color = PALETTE[idx % PALETTE.length];
     return `
@@ -1052,6 +1079,32 @@ function render() {
     state.didAutoScrollHeatmap = false;
   }
 }
+
+function updateHoveredDailyBar(dateKey: string): void {
+  if (state.hoveredBarDate === dateKey) return;
+  state.hoveredBarDate = dateKey;
+
+  const root = document.getElementById('app');
+  if (!root) return;
+
+  root.querySelectorAll<HTMLElement>('.bar-item').forEach((el) => {
+    el.classList.toggle('active', el.dataset.barDate === dateKey);
+  });
+
+  const detailEl = root.querySelector<HTMLElement>('[data-daily-detail]');
+  const day = state.usage?.recent14Days?.find((d) => d.dateKey === dateKey);
+  if (detailEl && day) {
+    detailEl.textContent = `${day.dateKey} · ${compactTokens(day.totalTokens)} · ${formatUSD(day.estimatedCostUSD)}`;
+  }
+}
+
+document.addEventListener('mouseover', (e) => {
+  const target = e.target as HTMLElement | null;
+  const bar = target?.closest('.bar-item') as HTMLElement | null;
+  if (bar?.dataset.barDate) {
+    updateHoveredDailyBar(bar.dataset.barDate);
+  }
+});
 
 document.addEventListener('click', (e) => {
   const target = e.target as HTMLElement | null;
@@ -1147,7 +1200,10 @@ document.addEventListener('click', (e) => {
 document.addEventListener('change', (e) => {
   const target = e.target as HTMLSelectElement | null;
   if (target?.dataset.action === 'select-session') {
-    state.selectedCascadeId = target.value || null;
+    state.pinnedCascadeId = target.value || null;
+    if (state.pinnedCascadeId) {
+      state.displayedCascadeId = state.pinnedCascadeId;
+    }
     void refreshLive(false, true);
   }
 });
@@ -1157,7 +1213,7 @@ async function bootstrap() {
   try {
     await app.connect();
     const ctx = app.getHostContext();
-    applyTheme(ctx?.theme, ctx?.styles?.variables as Record<string, string> | undefined);
+    applyTheme(ctx?.theme, ctx?.styles?.variables);
   } catch (err) {
     state.errorBanner = err instanceof Error ? err.message : String(err);
     render();

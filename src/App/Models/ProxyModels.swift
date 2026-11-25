@@ -13,6 +13,8 @@ struct ProxyConfig: Codable, Equatable {
     var enableMenuBarMonitor: Bool
     var showMenuBarMetrics: Bool
     var appLanguage: AppLanguage
+    var autoCheckUpdates: Bool
+    var skippedUpdateVersion: String?
 
     static let defaultConfig = ProxyConfig(
         host: "127.0.0.1",
@@ -23,7 +25,9 @@ struct ProxyConfig: Codable, Equatable {
         noProxy: defaultNoProxy,
         enableMenuBarMonitor: true,
         showMenuBarMetrics: true,
-        appLanguage: .system
+        appLanguage: .system,
+        autoCheckUpdates: true,
+        skippedUpdateVersion: nil
     )
 
     init(
@@ -35,7 +39,9 @@ struct ProxyConfig: Codable, Equatable {
         noProxy: String = ProxyConfig.defaultNoProxy,
         enableMenuBarMonitor: Bool = true,
         showMenuBarMetrics: Bool = true,
-        appLanguage: AppLanguage = .system
+        appLanguage: AppLanguage = .system,
+        autoCheckUpdates: Bool = true,
+        skippedUpdateVersion: String? = nil
     ) {
         self.host = host
         self.hookPort = hookPort
@@ -46,6 +52,8 @@ struct ProxyConfig: Codable, Equatable {
         self.enableMenuBarMonitor = enableMenuBarMonitor
         self.showMenuBarMetrics = showMenuBarMetrics
         self.appLanguage = appLanguage
+        self.autoCheckUpdates = autoCheckUpdates
+        self.skippedUpdateVersion = skippedUpdateVersion
     }
 
     init(from decoder: Decoder) throws {
@@ -62,6 +70,8 @@ struct ProxyConfig: Codable, Equatable {
         enableMenuBarMonitor = try container.decodeIfPresent(Bool.self, forKey: .enableMenuBarMonitor) ?? true
         showMenuBarMetrics = try container.decodeIfPresent(Bool.self, forKey: .showMenuBarMetrics) ?? true
         appLanguage = try container.decodeIfPresent(AppLanguage.self, forKey: .appLanguage) ?? .system
+        autoCheckUpdates = try container.decodeIfPresent(Bool.self, forKey: .autoCheckUpdates) ?? true
+        skippedUpdateVersion = try container.decodeIfPresent(String.self, forKey: .skippedUpdateVersion)
     }
 
     static func normalizeHost(_ raw: String) -> String {
@@ -90,17 +100,25 @@ struct ProxyConfig: Codable, Equatable {
         Self.normalizeHost(host)
     }
 
-    private var urlFormattedHost: String {
+    var urlFormattedHost: String {
         let h = normalizedHost
         return h.contains(":") ? "[\(h)]" : h
     }
 
+    var displayHookHostPort: String {
+        "\(urlFormattedHost):\(hookPort)"
+    }
+
+    var displayEnvHostPort: String {
+        "\(urlFormattedHost):\(envPort)"
+    }
+
     var hookProxyURL: String {
-        "socks5://\(urlFormattedHost):\(hookPort)"
+        "socks5://\(displayHookHostPort)"
     }
 
     var envProxyURL: String {
-        "\(envScheme)://\(urlFormattedHost):\(envPort)"
+        "\(envScheme)://\(displayEnvHostPort)"
     }
 
     var effectiveNoProxy: String {

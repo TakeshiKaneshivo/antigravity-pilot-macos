@@ -78,6 +78,7 @@ enum MainTab: String, CaseIterable, Identifiable {
 struct MainWindowView: View {
     @ObservedObject var appModel: AppModel
     @ObservedObject var monitorStore: MonitorStore
+    @ObservedObject var updateStore: UpdateStore
     var onHideToMenuBar: () -> Void
 
     private static let sidebarCollapsedKey = "pilot.sidebarCollapsed"
@@ -86,10 +87,16 @@ struct MainWindowView: View {
     @State private var hoveredTab: MainTab?
     @State private var hoveredHeaderButton: String?
     @State private var showHelpPopover = false
+    @State private var showUpdatePopover = false
+    @State private var isHoveringVersion = false
     @State private var isSidebarCollapsed: Bool = UserDefaults.standard.bool(forKey: "pilot.sidebarCollapsed")
 
     private var lang: AppLanguage {
         appModel.config.appLanguage
+    }
+
+    private var hasActionableUpdate: Bool {
+        updateStore.hasActionableUpdate(skippedVersion: appModel.config.skippedUpdateVersion)
     }
 
     var body: some View {
@@ -146,6 +153,22 @@ struct MainWindowView: View {
         .onChange(of: isSidebarCollapsed) { collapsed in
             UserDefaults.standard.set(collapsed, forKey: Self.sidebarCollapsedKey)
         }
+        .onChange(of: updateStore.openPopoverRequestCount) { _ in
+            if isSidebarCollapsed {
+                withAnimation(.easeInOut(duration: 0.22)) {
+                    isSidebarCollapsed = false
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.24) {
+                    showUpdatePopover = true
+                }
+            } else {
+                showUpdatePopover = true
+            }
+            if !updateStore.state.isBusy,
+               updateStore.availableVersionBadgeText(skippedVersion: appModel.config.skippedUpdateVersion) == nil {
+                updateStore.checkForUpdates(config: appModel.config, userInitiated: true)
+            }
+        }
     }
 
     private var sidebar: some View {
@@ -167,9 +190,48 @@ struct MainWindowView: View {
                         Circle()
                             .fill(runtimeDotColor)
                             .frame(width: 6, height: 6)
-                        Text("v\(appModel.appVersionText)")
-                            .font(.caption2.weight(.medium))
-                            .foregroundStyle(.secondary)
+
+                        Button {
+                            showUpdatePopover.toggle()
+                            if showUpdatePopover {
+                                switch updateStore.state {
+                                case .idle, .failed:
+                                    updateStore.checkForUpdates(config: appModel.config, userInitiated: true)
+                                default:
+                                    break
+                                }
+                            }
+                        } label: {
+                            Text("v\(appModel.appVersionText)")
+                                .font(.caption2.weight(.medium))
+                                .foregroundStyle(isHoveringVersion ? .primary : .secondary)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 1.5)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                        .fill(isHoveringVersion || showUpdatePopover ? Color.primary.opacity(0.08) : Color.clear)
+                                )
+                                .overlay(alignment: .topTrailing) {
+                                    if hasActionableUpdate {
+                                        Circle()
+                                            .fill(Color.red)
+                                            .frame(width: 6.5, height: 6.5)
+                                            .overlay(
+                                                Circle()
+                                                    .strokeBorder(Color(NSColor.windowBackgroundColor), lineWidth: 1)
+                                            )
+                                            .offset(x: 2, y: -2)
+                                    }
+                                }
+                        }
+                        .buttonStyle(.plain)
+                        .onHover { hovering in
+                            isHoveringVersion = hovering
+                        }
+                        .help(versionButtonTooltip)
+                        .popover(isPresented: $showUpdatePopover, arrowEdge: .trailing) {
+                            UpdatePopoverView(appModel: appModel, updateStore: updateStore)
+                        }
                     }
                 }
             }
@@ -328,6 +390,14 @@ struct MainWindowView: View {
                     isSidebarCollapsed.toggle()
                 }
             }
+            .overlay(alignment: .topTrailing) {
+                if isSidebarCollapsed && hasActionableUpdate {
+                    Circle()
+                        .fill(Color.red)
+                        .frame(width: 6.5, height: 6.5)
+                        .offset(x: 2, y: -2)
+                }
+            }
             .keyboardShortcut("s", modifiers: [.command, .option])
 
             VStack(alignment: .leading, spacing: 2) {
@@ -461,6 +531,19 @@ struct MainWindowView: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
+    }
+
+    private var versionButtonTooltip: String {
+        if let ver = updateStore.availableVersionBadgeText(skippedVersion: appModel.config.skippedUpdateVersion) {
+            return L10n.t(
+                zhHans: "发现新版本 v\(ver)，点击查看并更新",
+                zhHant: "發現新版本 v\(ver)，點擊查看並更新",
+                en: "Update v\(ver) available — click to view",
+                ru: "Доступно обновление v\(ver) — нажмите для просмотра",
+                lang
+            )
+        }
+        return L10n.t("点击检查软件更新", "Click to check for updates", lang)
     }
 
     private var runtimeDotColor: Color {

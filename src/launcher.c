@@ -234,7 +234,6 @@ static void spawn_startup_tip_async(void) {
     }
 
     const char *ag_proxy = getenv("AG_PROXY");
-    const char *env_proxy = getenv("HTTPS_PROXY");
     const char *built_ver = getenv("AG_SOURCE_VERSION");
     const char *app_lang = getenv("AG_APP_LANG");
     if (!app_lang || !app_lang[0]) {
@@ -253,13 +252,14 @@ static void spawn_startup_tip_async(void) {
     if (!ag_proxy || !ag_proxy[0]) {
       ag_proxy = "socks5://127.0.0.1:7890";
     }
-    if (!env_proxy || !env_proxy[0]) {
-      env_proxy = "http://127.0.0.1:7890";
-    }
 
     char current_ver[128];
     int has_current_ver = (read_source_app_version(current_ver, sizeof(current_ver)) == 0);
     int needs_refresh = (built_ver && built_ver[0] && has_current_ver && strcmp(built_ver, current_ver) != 0);
+
+    if (!needs_refresh) {
+      _exit(0);
+    }
 
     char subtitle[512];
     char notify_msg[1024];
@@ -270,102 +270,65 @@ static void spawn_startup_tip_async(void) {
     int is_zh_hant = (strcmp(app_lang, "zh-Hant") == 0);
     int is_ru = (strcmp(app_lang, "ru") == 0);
 
-    if (needs_refresh) {
-      if (is_zh_hant) {
-        ok_btn = "知道了";
-        snprintf(subtitle, sizeof(subtitle), "偵測到原版 Antigravity 已更新（%s → %s）", built_ver, current_ver);
-        snprintf(notify_msg, sizeof(notify_msg),
-                 "請開啟 /Applications/Antigravity Pilot.app 重新整理代理副本（目前代理：%s）",
-                 ag_proxy);
-        snprintf(dialog_msg, sizeof(dialog_msg),
-                 "⚠️ 偵測到原版 Antigravity 已更新（%s → %s）！\n\n"
-                 "目前代理：%s（環境變數：%s）\n\n"
-                 "• 可將目前 Dock 圖示「保留在程序塢」，日常點擊即可單圖示秒開。\n"
-                 "• 更新了原版 Antigravity 或想修改代理連接埠時，才需要再點一次 /Applications/Antigravity Pilot.app 重新整理副本。",
-                 built_ver, current_ver, ag_proxy, env_proxy);
-      } else if (is_zh_hans) {
-        ok_btn = "知道了";
-        snprintf(subtitle, sizeof(subtitle), "检测到原版 Antigravity 已更新（%s → %s）", built_ver, current_ver);
-        snprintf(notify_msg, sizeof(notify_msg),
-                 "请打开 /Applications/Antigravity Pilot.app 刷新代理副本（当前代理：%s）",
-                 ag_proxy);
-        snprintf(dialog_msg, sizeof(dialog_msg),
-                 "⚠️ 检测到原版 Antigravity 已更新（%s → %s）！\n\n"
-                 "当前代理：%s（环境变量：%s）\n\n"
-                 "• 可将当前 Dock 图标「保留在程序坞」，日常点击即可单图标秒开。\n"
-                 "• 更新了原版 Antigravity 或想修改代理端口时，才需要再点一次 /Applications/Antigravity Pilot.app 刷新副本。",
-                 built_ver, current_ver, ag_proxy, env_proxy);
-      } else if (is_ru) {
-        ok_btn = "Понятно";
-        snprintf(subtitle, sizeof(subtitle), "Оригинальный Antigravity обновлён (%s → %s)", built_ver, current_ver);
-        snprintf(notify_msg, sizeof(notify_msg),
-                 "Откройте /Applications/Antigravity Pilot.app для обновления копии (прокси: %s)",
-                 ag_proxy);
-        snprintf(dialog_msg, sizeof(dialog_msg),
-                 "⚠️ Обнаружено обновление оригинального Antigravity (%s → %s)!\n\n"
-                 "Текущий прокси: %s (ENV: %s)\n\n"
-                 "• Закрепите эту иконку в Dock для быстрого запуска.\n"
-                 "• Перезапускать /Applications/Antigravity Pilot.app нужно только после обновления оригинала или смены порта.",
-                 built_ver, current_ver, ag_proxy, env_proxy);
-      } else {
-        ok_btn = "OK";
-        snprintf(subtitle, sizeof(subtitle), "Original Antigravity updated (%s → %s)", built_ver, current_ver);
-        snprintf(notify_msg, sizeof(notify_msg),
-                 "Open /Applications/Antigravity Pilot.app to rebuild runtime copy (proxy: %s)",
-                 ag_proxy);
-        snprintf(dialog_msg, sizeof(dialog_msg),
-                 "⚠️ Original Antigravity has been updated (%s → %s)!\n\n"
-                 "Current proxy: %s (ENV: %s)\n\n"
-                 "• Keep this icon in the Dock for instant single-icon launch.\n"
-                 "• Re-open /Applications/Antigravity Pilot.app only when original Antigravity updates or you change proxy ports.",
-                 built_ver, current_ver, ag_proxy, env_proxy);
-      }
+    if (is_zh_hant) {
+      ok_btn = "知道了";
+      snprintf(subtitle, sizeof(subtitle), "偵測到原版 Antigravity 已更新（%s → %s）", built_ver, current_ver);
+      snprintf(notify_msg, sizeof(notify_msg),
+               "請開啟 Antigravity Pilot 重建代理副本以同步新版。");
+      snprintf(dialog_msg, sizeof(dialog_msg),
+               "偵測到原版 Antigravity 已更新（%s → %s）。\n\n"
+               "請結束目前視窗後開啟 /Applications/Antigravity Pilot.app 重建代理副本以同步最新版本。\n"
+               "（目前代理：%s）",
+               built_ver, current_ver, ag_proxy);
+    } else if (is_zh_hans) {
+      ok_btn = "知道了";
+      snprintf(subtitle, sizeof(subtitle), "检测到原版 Antigravity 已更新（%s → %s）", built_ver, current_ver);
+      snprintf(notify_msg, sizeof(notify_msg),
+               "请打开 Antigravity Pilot 重建代理副本以同步新版。");
+      snprintf(dialog_msg, sizeof(dialog_msg),
+               "检测到原版 Antigravity 已更新（%s → %s）。\n\n"
+               "请退出当前窗口后打开 /Applications/Antigravity Pilot.app 重建代理副本以同步最新版本。\n"
+               "（当前代理：%s）",
+               built_ver, current_ver, ag_proxy);
+    } else if (is_ru) {
+      ok_btn = "Понятно";
+      snprintf(subtitle, sizeof(subtitle), "Оригинальный Antigravity обновлён (%s → %s)", built_ver, current_ver);
+      snprintf(notify_msg, sizeof(notify_msg),
+               "Откройте Antigravity Pilot, чтобы пересобрать копию.");
+      snprintf(dialog_msg, sizeof(dialog_msg),
+               "Оригинальный Antigravity обновлён (%s → %s).\n\n"
+               "Закройте это окно и откройте /Applications/Antigravity Pilot.app, чтобы пересобрать копию.\n"
+               "(Текущий прокси: %s)",
+               built_ver, current_ver, ag_proxy);
     } else {
-      if (is_zh_hant) {
-        ok_btn = "知道了";
-        snprintf(subtitle, sizeof(subtitle), "代理已啟用：%s", ag_proxy);
-        snprintf(notify_msg, sizeof(notify_msg),
-                 "可將此圖示保留在 Dock 秒開；更新原版或改連接埠時請開啟 Antigravity Pilot 重新整理副本。");
-      } else if (is_zh_hans) {
-        ok_btn = "知道了";
-        snprintf(subtitle, sizeof(subtitle), "代理已启用：%s", ag_proxy);
-        snprintf(notify_msg, sizeof(notify_msg),
-                 "可将此图标保留在 Dock 秒开；更新原版或改端口时请打开 Antigravity Pilot 刷新副本。");
-      } else if (is_ru) {
-        ok_btn = "Понятно";
-        snprintf(subtitle, sizeof(subtitle), "Прокси активен: %s", ag_proxy);
-        snprintf(notify_msg, sizeof(notify_msg),
-                 "Закрепите иконку в Dock. Обновляйте копию через Antigravity Pilot после апдейта оригинала.");
-      } else {
-        ok_btn = "OK";
-        snprintf(subtitle, sizeof(subtitle), "Proxy active: %s", ag_proxy);
-        snprintf(notify_msg, sizeof(notify_msg),
-                 "Keep this icon in Dock for quick launch; open Antigravity Pilot to rebuild after app updates.");
-      }
-      dialog_msg[0] = '\0';
+      ok_btn = "OK";
+      snprintf(subtitle, sizeof(subtitle), "Original Antigravity updated (%s → %s)", built_ver, current_ver);
+      snprintf(notify_msg, sizeof(notify_msg),
+               "Open Antigravity Pilot to rebuild the runtime copy.");
+      snprintf(dialog_msg, sizeof(dialog_msg),
+               "Original Antigravity has been updated (%s → %s).\n\n"
+               "Quit this window and open /Applications/Antigravity Pilot.app to rebuild the runtime copy.\n"
+               "(Current proxy: %s)",
+               built_ver, current_ver, ag_proxy);
     }
 
-    const char *show_dialog = needs_refresh ? "1" : "0";
     const char *script =
         "on run argv\n"
         "  set tipTitle to item 1 of argv\n"
         "  set tipSub to item 2 of argv\n"
         "  set tipNotify to item 3 of argv\n"
         "  set tipDialog to item 4 of argv\n"
-        "  set showDialog to item 5 of argv\n"
-        "  set okLabel to item 6 of argv\n"
+        "  set okLabel to item 5 of argv\n"
         "  try\n"
         "    display notification tipNotify with title tipTitle subtitle tipSub\n"
         "  end try\n"
-        "  if showDialog is \"1\" then\n"
-        "    try\n"
-        "      display dialog tipDialog with title tipTitle buttons {okLabel} default button okLabel giving up after 4\n"
-        "    end try\n"
-        "  end if\n"
+        "  try\n"
+        "    display dialog tipDialog with title tipTitle buttons {okLabel} default button okLabel giving up after 4\n"
+        "  end try\n"
         "end run\n";
 
     execl("/usr/bin/osascript", "osascript", "-e", script,
-          "Antigravity Pilot", subtitle, notify_msg, dialog_msg, show_dialog, ok_btn, (char *)NULL);
+          "Antigravity Pilot", subtitle, notify_msg, dialog_msg, ok_btn, (char *)NULL);
     _exit(127);
   }
 
@@ -533,7 +496,7 @@ int main(int argc, char **argv) {
   snprintf(dylib, sizeof(dylib), "%s/libantigravity_proxy.dylib", resources_dir);
 
   set_default_env("AG_PROXY", "socks5://127.0.0.1:7890");
-  set_default_env("AG_PROXY_LOG", "1");
+  set_default_env("AG_PROXY_LOG", "0");
   set_default_env("AG_PROXY_TIMEOUT_MS", "15000");
   set_default_env("HTTP_PROXY", "http://127.0.0.1:7890");
   set_default_env("HTTPS_PROXY", "http://127.0.0.1:7890");
