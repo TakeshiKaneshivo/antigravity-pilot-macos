@@ -24,22 +24,29 @@
 <table>
   <tr>
     <td align="center" width="33.3%">
-      <img src="docs/screenshots/proxy-overview.jpg" width="100%" alt="Antigravity Pilot - 代理概览">
+      <img src="docs/screenshots/proxy-overview.png" width="100%" alt="Antigravity Pilot - 代理概览">
       <br><sub>代理概览（三阶健康链路 & 热更新）</sub>
     </td>
     <td align="center" width="33.3%">
-      <img src="docs/screenshots/live-monitor.jpg" width="100%" alt="Antigravity Pilot - 实时监控">
+      <img src="docs/screenshots/live-monitor.png" width="100%" alt="Antigravity Pilot - 实时监控">
       <br><sub>实时监控（上下文占用 & 共享配额池）</sub>
     </td>
     <td align="center" width="33.3%">
-      <img src="docs/screenshots/usage-billing.jpg" width="100%" alt="Antigravity Pilot - 用量与账单">
+      <img src="docs/screenshots/usage-billing.png" width="100%" alt="Antigravity Pilot - 用量与账单">
       <br><sub>用量与账单（20 周热力图 & 费用估算）</sub>
     </td>
   </tr>
+</table>
+
+<table>
   <tr>
-    <td align="center" colspan="3">
-      <img src="docs/screenshots/in-app-plugin.jpg" width="100%" alt="Antigravity 应用内 MCP 看板">
-      <br><sub>Antigravity 应用内 MCP 看板（左侧边栏全屏视图 · 1 年活跃热力图与模型占比）</sub>
+    <td align="center" width="50%">
+      <img src="docs/screenshots/in-app-monitor.png" width="100%" alt="Antigravity 应用内 MCP 实时监控">
+      <br><sub>应用内 MCP 看板 · 实时监控（代理诊断 & 上下文 / 配额池）</sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="docs/screenshots/in-app-plugin.png" width="100%" alt="Antigravity 应用内 MCP 用量与账单">
+      <br><sub>应用内 MCP 看板 · 用量与账单（1 年热力图 & 模型占比）</sub>
     </td>
   </tr>
 </table>

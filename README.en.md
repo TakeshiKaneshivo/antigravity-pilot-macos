@@ -24,22 +24,29 @@ A **zero-intrusion**, 100% native macOS companion for Antigravity. Route Antigra
 <table>
   <tr>
     <td align="center" width="33.3%">
-      <img src="docs/screenshots/proxy-overview.jpg" width="100%" alt="Antigravity Pilot - Proxy Overview">
+      <img src="docs/screenshots/proxy-overview.png" width="100%" alt="Antigravity Pilot - Proxy Overview">
       <br><sub>Proxy Overview (3-Stage Health & Hot Update)</sub>
     </td>
     <td align="center" width="33.3%">
-      <img src="docs/screenshots/live-monitor.jpg" width="100%" alt="Antigravity Pilot - Live Monitor">
+      <img src="docs/screenshots/live-monitor.png" width="100%" alt="Antigravity Pilot - Live Monitor">
       <br><sub>Live Monitor (Context Gauge & Quota Pools)</sub>
     </td>
     <td align="center" width="33.3%">
-      <img src="docs/screenshots/usage-billing.jpg" width="100%" alt="Antigravity Pilot - Usage & Billing">
+      <img src="docs/screenshots/usage-billing.png" width="100%" alt="Antigravity Pilot - Usage & Billing">
       <br><sub>Usage & Billing (20-Week Heatmap & Cost)</sub>
     </td>
   </tr>
+</table>
+
+<table>
   <tr>
-    <td align="center" colspan="3">
-      <img src="docs/screenshots/in-app-plugin.jpg" width="100%" alt="Antigravity In-App MCP Dashboard">
-      <br><sub>Antigravity In-App MCP Dashboard (Left Sidebar Full View · 1-Year Heatmap & Model Breakdown)</sub>
+    <td align="center" width="50%">
+      <img src="docs/screenshots/in-app-monitor.png" width="100%" alt="Antigravity In-App MCP Live Monitor">
+      <br><sub>In-App MCP Dashboard · Live Monitor (Proxy Probe & Context / Quotas)</sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="docs/screenshots/in-app-plugin.png" width="100%" alt="Antigravity In-App MCP Usage & Billing">
+      <br><sub>In-App MCP Dashboard · Usage & Billing (1-Year Heatmap & Cost)</sub>
     </td>
   </tr>
 </table>

@@ -24,22 +24,29 @@
 <table>
   <tr>
     <td align="center" width="33.3%">
-      <img src="docs/screenshots/proxy-overview.jpg" width="100%" alt="Antigravity Pilot - Прокси">
+      <img src="docs/screenshots/proxy-overview.png" width="100%" alt="Antigravity Pilot - Прокси">
       <br><sub>Прокси (3-этапная проверка и хот-апдейт)</sub>
     </td>
     <td align="center" width="33.3%">
-      <img src="docs/screenshots/live-monitor.jpg" width="100%" alt="Antigravity Pilot - Монитор">
+      <img src="docs/screenshots/live-monitor.png" width="100%" alt="Antigravity Pilot - Монитор">
       <br><sub>Монитор (Контекст и пулы квот)</sub>
     </td>
     <td align="center" width="33.3%">
-      <img src="docs/screenshots/usage-billing.jpg" width="100%" alt="Antigravity Pilot - Расход и счёт">
+      <img src="docs/screenshots/usage-billing.png" width="100%" alt="Antigravity Pilot - Расход и счёт">
       <br><sub>Расход и счёт (Карта за 20 недель и оценка)</sub>
     </td>
   </tr>
+</table>
+
+<table>
   <tr>
-    <td align="center" colspan="3">
-      <img src="docs/screenshots/in-app-plugin.jpg" width="100%" alt="Встроенная панель MCP в Antigravity">
-      <br><sub>Встроенная панель MCP в Antigravity (Полный экран в боковой панели · Карта за 1 год и модели)</sub>
+    <td align="center" width="50%">
+      <img src="docs/screenshots/in-app-monitor.png" width="100%" alt="Встроенный MCP Монитор в Antigravity">
+      <br><sub>Встроенная панель MCP · Монитор (Прокси, контекст и квоты)</sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="docs/screenshots/in-app-plugin.png" width="100%" alt="Встроенная панель MCP Расход и счёт в Antigravity">
+      <br><sub>Встроенная панель MCP · Расход и счёт (Карта за 1 год и модели)</sub>
     </td>
   </tr>
 </table>
