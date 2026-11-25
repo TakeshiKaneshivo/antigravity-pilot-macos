@@ -125,22 +125,6 @@ rm -rf "$HOME/.gemini/config/plugins/antigravity-pilot"
 
 ## How It Works
 
-```mermaid
-flowchart LR
-    Orig["/Applications/Antigravity.app (Read-Only, Untouched)"] -->|"Initial copy + merged Entitlements"| RT["Isolated User-Space Runtime Copy"]
-    Pilot["Antigravity Pilot.app (SwiftUI Companion)"] -->|"0.1s Fast Hot-Update"| Env["External proxy.env"]
-    Env -->|"Read on launch"| Launcher["AntigravityProxyLauncher (in-place execv)"]
-    Launcher --> RT
-    RT -->|"Channel 1: dylib interpose FakeIP + SOCKS5"| Proxy["Local Proxy (Clash / Surge / sing-box)"]
-    RT -->|"Channel 2: HTTP/HTTPS/ALL_PROXY + NODE_USE_ENV_PROXY"| Proxy
-    RT -->|"Channel 3: Primary Chromium --proxy-server"| Proxy
-    LS["Local Language Server (hub_*.json)"] -->|"Loopback Connect-RPC (Read-Only)"| Pilot
-    Logs["brain/*/transcript.jsonl"] -->|"Incremental Scan + Cache"| Pilot
-    Pilot -->|"One-click install to ~/.gemini/config/plugins"| MCP["Official MCP App Plugin (Zero JS Injection)"]
-    LS -->|"Loopback Connect-RPC"| MCP
-    Logs -->|"Incremental Scan"| MCP
-```
-
 1. **Zero-Intrusion Isolated Copy**: `/Applications/Antigravity.app` uses Hardened Runtime and blocks external dylib injection, so Pilot keeps it read-only and creates an isolated user-space runtime copy with merged entitlements and local ad-hoc re-signing.
 2. **Three-Channel No-TUN Proxy**: `libantigravity_proxy.dylib` (`__DATA,__interpose` + `198.18.0.0/15` FakeIP over SOCKS5), Go/Node env vars, and primary Chromium `--proxy-server` flags work together while bypassing LAN CIDRs via `NO_PROXY`.
 3. **0.1s Hot-Update & Single Dock Icon**: `AntigravityProxyLauncher` reads external `proxy.env` first and replaces itself via `execv()`, so port or `NO_PROXY` edits only rewrite the env file without copying or re-signing.

@@ -125,22 +125,6 @@ rm -rf "$HOME/.gemini/config/plugins/antigravity-pilot"
 
 ## Принцип работы
 
-```mermaid
-flowchart LR
-    Orig["/Applications/Antigravity.app (Только чтение)"] -->|"Первичная копия + Entitlements"| RT["Изолированная копия Antigravity-Pilot.app"]
-    Pilot["Antigravity Pilot.app (SwiftUI)"] -->|"Хот-апдейт за 0.1 с"| Env["Внешний proxy.env"]
-    Env -->|"Чтение при старте"| Launcher["AntigravityProxyLauncher (execv)"]
-    Launcher --> RT
-    RT -->|"Канал 1: dylib interpose FakeIP + SOCKS5"| Proxy["Локальный прокси (Clash / Surge / sing-box)"]
-    RT -->|"Канал 2: HTTP/HTTPS/ALL_PROXY + NODE_USE_ENV_PROXY"| Proxy
-    RT -->|"Канал 3: Главный Chromium --proxy-server"| Proxy
-    LS["Локальный Language Server (hub_*.json)"] -->|"Loopback Connect-RPC (Только чтение)"| Pilot
-    Logs["brain/*/transcript.jsonl"] -->|"Инкрементальное сканирование"| Pilot
-    Pilot -->|"Установка в ~/.gemini/config/plugins"| MCP["Официальный MCP App плагин (Без JS-инъекций)"]
-    LS -->|"Loopback Connect-RPC"| MCP
-    Logs -->|"Инкрементальное сканирование"| MCP
-```
-
 1. **Изолированная копия без вмешательства**: `/Applications/Antigravity.app` защищён Hardened Runtime и блокирует инъекцию библиотек, поэтому Pilot не трогает оригинал, а создаёт изолированную копию в папке пользователя и подписывает её с нужными Entitlements.
 2. **Трёхканальный прокси без TUN**: `libantigravity_proxy.dylib` (`__DATA,__interpose` + FakeIP `198.18.0.0/15` через SOCKS5), переменные окружения Go/Node и флаги главного процесса Chromium совместно маршрутизируют трафик, пропуская локальные CIDR по `NO_PROXY`.
 3. **Хот-апдейт за 0.1 с и одна иконка в Dock**: `AntigravityProxyLauncher` читает внешний `proxy.env` и заменяет себя через `execv()`, поэтому смена портов или `NO_PROXY` обновляет только env-файл без пересборки.

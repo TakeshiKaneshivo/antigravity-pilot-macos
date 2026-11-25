@@ -125,22 +125,6 @@ rm -rf "$HOME/.gemini/config/plugins/antigravity-pilot"
 
 ## 主要功能實現原理
 
-```mermaid
-flowchart LR
-    Orig["/Applications/Antigravity.app (唯讀不動)"] -->|"首次複製 + 合併 Entitlements"| RT["使用者空間隔離副本 Antigravity-Pilot.app"]
-    Pilot["Antigravity Pilot.app (原生 SwiftUI 伴侶)"] -->|"0.1s 極速熱更新"| Env["外置 proxy.env"]
-    Env -->|"啟動時讀取"| Launcher["AntigravityProxyLauncher (execv 原地拉起)"]
-    Launcher --> RT
-    RT -->|"通道 1: dylib interpose FakeIP + SOCKS5"| Proxy["本機代理 (Clash / Surge / sing-box)"]
-    RT -->|"通道 2: HTTP/HTTPS/ALL_PROXY + NODE_USE_ENV_PROXY"| Proxy
-    RT -->|"通道 3: 主 Chromium --proxy-server"| Proxy
-    LS["本機 Language Server (hub_*.json)"] -->|"迴環 Connect-RPC (唯讀零侵入)"| Pilot
-    Logs["brain/*/transcript.jsonl"] -->|"增量掃描 + 本機快取"| Pilot
-    Pilot -->|"一鍵部署至 ~/.gemini/config/plugins"| MCP["官方 MCP App 外掛 (零 JS 注入)"]
-    LS -->|"迴環 Connect-RPC"| MCP
-    Logs -->|"增量掃描"| MCP
-```
-
 1. **零侵入隔離副本**：原版 `/Applications/Antigravity.app` 啟用了 Hardened Runtime 會屏蔽外部動態函式庫注入，因此 Pilot 保持原版唯讀不動，僅於使用者目錄建立單層隔離 Runtime 副本並合併 Entitlements 後本機重簽署。
 2. **三通道免 TUN 代理**：由 `libantigravity_proxy.dylib`（`__DATA,__interpose` + `198.18.0.0/15` FakeIP 轉 SOCKS5）、Go/Node 環境變數及主 Chromium `--proxy-server` 參數協同接管全部程序流量，並依 `NO_PROXY` 規則直連區網 CIDR。
 3. **0.1 秒熱更新與單圖示**：`AntigravityProxyLauncher` 優先讀取外置 `proxy.env` 後原地 `execv()` 拉起主程式；修改連接埠或 `NO_PROXY` 僅重寫外置檔案，無需重複複製與重簽署。
