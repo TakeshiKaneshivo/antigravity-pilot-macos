@@ -5,193 +5,115 @@
 </p>
 
 <p align="center">
-  <strong>简体中文</strong> | <a href="README.en.md">English</a>
+  <img src="https://img.shields.io/badge/macOS-13.0%2B-007AFF?style=flat-square" alt="macOS 13.0+">
+  <img src="https://img.shields.io/badge/Arch-Universal%20(arm64%20%2B%20x86__64)-34C759?style=flat-square" alt="Universal arm64 + x86_64">
+  <img src="https://img.shields.io/badge/Design-Zero--Intrusion-5856D6?style=flat-square" alt="Zero-Intrusion">
+  <img src="https://img.shields.io/badge/License-MIT-gray?style=flat-square" alt="MIT License">
 </p>
 
-专为 macOS 上的 Antigravity 打造的原生领航伴侣：在不打开 Clash TUN 的情况下，让 Antigravity 走本机代理，并提供纯原生的实时上下文监控、模型配额与 Token 用量看板。
+<p align="center">
+  <strong>简体中文</strong> | <a href="README.zh-Hant.md">繁體中文</a> | <a href="README.en.md">English</a> | <a href="README.ru.md">Русский</a>
+</p>
 
-**Antigravity Pilot for macOS** 核心特性：
+专为 macOS 打造的 **Antigravity 零侵入原生伴侣**。无需开启 Clash TUN 模式，也不改动原版 `/Applications/Antigravity.app`，让 Antigravity 稳定走本机代理，并提供纯原生实时监控、配额池、用量账单与官方应用内看板。
 
-- **兼容 macOS 13.0 (Ventura) 及以上系统**（对齐原版 Antigravity `2.35+` 系统要求），支持 **Universal（Apple Silicon `arm64` + Intel `x86_64`）** 双架构编译、4 语言界面（简体中文 / 繁體中文 / English / Русский）与 `./build.sh --dmg` 一键打包。
-- **三通道免 TUN 代理与局域网 CIDR 绕过**：`libantigravity_proxy.dylib`（`__DATA,__interpose` Hook + `NO_PROXY` 域名/私有网段 CIDR 绕过）+ Go/Node 环境变量（含 `NODE_USE_ENV_PROXY=1`）+ 主进程 Chromium `--proxy-server` / `--proxy-bypass-list`。
-- **三阶代理健康诊断 & 冲突防护**：实时检测「TCP 端口 → SOCKS5 真实握手 → `generate_204` 出网延迟」，并在启动前自动检测原版与 Pilot 运行冲突，支持一键优雅退出。
-- **外置配置 0.1 秒极速热更新 & 动态 Entitlements**：仅修改端口、协议或 `NO_PROXY` 时写入外置 `proxy.env`，跳过重复复制和重签名；首次或重建副本时动态提取并合并原版 `/Applications/Antigravity.app` Entitlements。
-- **单层扁平 Runtime 结构与 Dock 单图标秒开**：`AntigravityProxyLauncher` 注入环境后原地 `execv()` 拉起主程序；关闭主窗口后监控缩入右上角菜单栏（`.accessory` 隐藏 Dock 图标），Dock 上依然只保留运行中的 Antigravity Pilot 一个图标。
-- **纯原生 SwiftUI 实时监控与用量看板（零 JS 注入、零 CDP）**：
-  - 直连本地 `~/.gemini/antigravity/daemon/hub_*.json` Connect-RPC，展示**实时会话上下文构成、TTFT/生成速度、模型共享配额池与重置倒计时**；
-  - 增量扫描 `~/.gemini/antigravity/brain/*/.system_generated/logs/transcript.jsonl`，通过 SwiftUI `Canvas` 与 `Swift Charts` 绘制 **20 周 Token 活跃热力图、每日趋势与估算 API 账单**；
-  - 支持 `NSStatusBar` 菜单栏胶囊 + Popover 与 `SMAppService` 原生登录项自启。
-- **Antigravity 应用内看板插件（官方 MCP App）**：
-  - 支持在「代理配置」中一键安装/更新/卸载到 `~/.gemini/config/plugins/antigravity-pilot/`，零 JS 注入、原版与代理版通用、自动同步亮暗主题；
-  - 在 Antigravity **左侧边栏** 打开「Pilot 监控与账单」全屏看板，或在任意对话右上角 **`+` 菜单** 打开「Pilot 实时监控」辅助面板，直接查看代理三阶健康状态、实时上下文、配额池与近一年（52 周）用量账单。
-- **图标切换与完整性同步**：支持在 **默认 Pilot 图标** 与 **原版图标** 之间一键切换（自动刷新 LaunchServices 与 Dock 缓存），并按 Chromium Pickle 4 字节对齐同步 `ElectronAsarIntegrity` 哈希。
+---
+
+## 零侵入设计
+
+| 维度 | Antigravity Pilot for macOS |
+| :--- | :--- |
+| **原版应用** | `/Applications/Antigravity.app` **100% 只读不动**，官方签名与目录结构完全不受影响 |
+| **网络代理** | **免 TUN 精准分流**：仅代理 Antigravity 及其子进程，局域网 CIDR 直连绕过 |
+| **监控采集** | **零 JS 注入、零 CDP**：纯原生 SwiftUI 读取本地守护进程只读 RPC 与日志归档 |
+| **应用内看板** | **官方 MCP Apps (SEP-1865)**：安装至用户插件目录，原版与代理版通用 |
+| **卸载还原** | 所有数据均在 `~/Library/Application Support/Antigravity Pilot/` 与 `~/.gemini/config/plugins/antigravity-pilot/`，删除即彻底还原 |
+
+---
+
+## 主要功能
+
+- **免 TUN 代理与 0.1 秒热更新**：通过隔离代理副本让 Antigravity 走本机 SOCKS5/HTTP 代理（内置 7 组常用预设、支持 IPv4/IPv6 与 `NO_PROXY` 局域网绕过），改端口免重建秒开。
+- **三阶健康检测与冲突防护**：实时验证「TCP 端口 → SOCKS5 握手 → 外网 `generate_204`」链路与 ENV 端口，先校验代理再提示并一键优雅退出运行中实例。
+- **纯原生实时监控**：查看当前对话上下文占用、缓存命中率、TTFT、生成速度与共享配额池倒计时（含 `0%` 已耗尽配额池），默认自动跟随最新会话并支持手动固定。
+- **Token 用量热力图与费用估算**：展示 20 周活跃热力图、近 14 日趋势、模型占比与估算 API 账单（支持 `custom_pricing.json` 自定义计费）。
+- **菜单栏伴侣与官方应用内插件**：主窗口可缩入菜单栏常驻并支持开机自启；一键在 Antigravity 边栏与对话 `+` 菜单嵌入「用量与账单 / 实时监控」看板（0 Token 刷新、自动亮暗主题）。
+- **应用内自更新与多语言图标切换**：支持从 GitHub Releases 自动检查更新并校验 SHA-256 后原地升级；支持 Pilot / 原版图标切换与简/繁中文、English、Русский 四语界面。
 
 ---
 
 ## 目录
 
-- [项目介绍](#项目介绍)
+- [零侵入设计](#零侵入设计)
+- [主要功能](#主要功能)
 - [快速开始](#快速开始)
-- [图标切换与自定义图标](#图标切换与自定义图标)
-- [更新 Antigravity](#更新-antigravity)
-- [停止后台进程](#停止后台进程)
-- [卸载与清理](#卸载与清理)
-- [工作原理](#工作原理)
-- [本地构建](#本地构建)
-- [本地测试](#本地测试)
+- [日常使用与维护](#日常使用与维护)
+- [主要功能实现原理](#主要功能实现原理)
+- [本地构建与测试](#本地构建与测试)
 - [故障排查](#故障排查)
 - [限制](#限制)
-- [致谢](#致谢)
-- [许可证](#许可证)
-
----
-
-## 项目介绍
-
-Release 里发布的是一个很轻量的 `Antigravity Pilot.app` 原生伴侣与配置器。它**不包含** Google 原版 `Antigravity.app`。
-
-系统要求与架构支持：
-
-- **macOS 13.0 (Ventura) 及以上**
-- **Apple Silicon (`arm64`) 与 Intel (`x86_64`)** Universal 二进制
-- **Xcode Command Line Tools**（在生成/刷新本地 Runtime 副本时，系统会调用签名工具执行 ad-hoc 重签名；若尚未安装，可执行 `xcode-select --install`）
-
-配置并启动后，它会：
-
-1. 执行三阶端口健康诊断（TCP 连通 → SOCKS5 握手 → 外网 `generate_204` 延迟探测）。
-2. 将配置原子写入外置 `~/Library/Application Support/Antigravity Pilot/proxy.env`。若已存在同版本、同图标且签名一致的 Runtime 副本，**0.1 秒直接热更新拉起**，无需重复复制。
-3. 首次生成或需要重建时，从 `/Applications/Antigravity.app` 复制一份单层副本到 `~/Library/Application Support/Antigravity Pilot/Runtime/Antigravity-Pilot.app`，写入 `AntigravityProxyLauncher`、`libantigravity_proxy.dylib`、`proxy.env`，按需替换 `PILOT` 图标与 `app.asar` 并同步 `ElectronAsarIntegrity`，动态合并原版 Entitlements 完成 ad-hoc 重签名。
-4. 启动代理版 Antigravity，主窗口可缩入右上角菜单栏常驻监控（支持实时上下文、配额与热力图）；Dock 上只保留这一个运行中的图标，右键「在程序坞中保留」即可日常单图标秒开。
-
-> 原版 `/Applications/Antigravity.app` 不会被修改。
-
-适用场景：
-
-- Antigravity 不读取 macOS system proxy。
-- Clash Verge 开启 system proxy 后，Antigravity 仍然无法登录或无法连接。
-- 不想长期打开 TUN，只想让 Antigravity 走本机代理，并希望在原生菜单栏随时掌握上下文占用、配额余量与 Token 费用。
+- [致谢与许可证](#致谢与许可证)
 
 ---
 
 ## 快速开始
 
-### Step 1: 安装原版 Antigravity
+### 系统要求
 
-请先确认原版 Antigravity 已安装在：
+- **macOS 13.0 (Ventura) 及以上**（支持 Apple Silicon `arm64` 与 Intel `x86_64` Universal）
+- **Xcode Command Line Tools**（生成/重建本地代理副本时用于重签名，未安装可执行 `xcode-select --install`）
+- 本机已安装原版 **`/Applications/Antigravity.app`**（Release 包不含原版应用）
 
-```text
-/Applications/Antigravity.app
-```
+### Step 1: 下载并安装 Antigravity Pilot.app
 
-### Step 2: 下载并安装 Antigravity Pilot.app
+前往 [Releases](https://github.com/TakeshiKaneshivo/antigravity-pilot-macos/releases) 下载 `Antigravity-Pilot-v0.1.0-macOS13-universal.dmg`（或参考[本地构建与测试](#本地构建与测试)自行编译），打开镜像后将 `Antigravity Pilot.app` 拖入 `Applications`。
 
-到本仓库 [Releases](https://github.com/TakeshiKaneshivo/antigravity-pilot-macos/releases) 下载 `Antigravity-Pilot-v0.1.0-macOS13-universal.dmg`（也可参考下方[本地构建](#本地构建)自行编译），打开镜像后将 `Antigravity Pilot.app` 拖入 `Applications` 文件夹。
-
-> **提示**：由于应用目前为本地 ad-hoc 签名、未做 Apple 公证，首次从网上下载打开时如果 macOS 提示“**已损坏，无法打开**”或“**无法验证开发者**”，在终端执行以下命令清除隔离属性后即可正常打开：
+> **提示**：应用采用本地 ad-hoc 签名，首次打开若提示“**已损坏，无法打开**”或“**无法验证开发者**”，执行以下命令清除隔离属性即可：
 >
 > ```bash
 > xattr -cr "/Applications/Antigravity Pilot.app"
 > ```
 
-### Step 3: 打开 Antigravity Pilot，配置端口并启动
+### Step 2: 选择代理预设并启动
 
-打开 `/Applications/Antigravity Pilot.app` 后，左侧边栏提供五个原生页面：**代理概览**、**实时监控**、**用量与账单**、**应用内插件**、**高级设置**。
+打开 `/Applications/Antigravity Pilot.app`，左侧边栏提供五个原生页面：**代理概览**、**实时监控**、**用量与账单**、**应用内插件**、**高级设置**。
 
-#### 情况 A：你的 Clash 端口是 7890
+1. 在「核心代理配置」的 **常用预设** 下拉菜单中直接选择你使用的代理客户端（内置 `Clash 7890`、`Verge 7897`、`Clash 7891`、`Surge 6153`、`v2ray 10808`、`Sing-box 12334`、`SOCKS 1080` 7 组预设）；若使用其他端口，手动填写 Host、SOCKS5 端口及 ENV 协议/端口即可。
+2. 确认三阶健康链全绿后，点击顶部卡片**右上角**的 **重建副本并启动**（已存在同版本副本时显示 **保存并极速启动**）。
 
-如果你使用 Clash Verge 默认 mixed port `7890`：
+### Step 3: Dock 单图标秒开与菜单栏常驻
 
-- 代理 Host：`127.0.0.1`
-- SOCKS5 端口：`7890`
-- 环境变量协议：`http`
-- 环境变量端口：`7890`
-- 应用图标：按需选择 **默认 Pilot 图标**（带 `PILOT` 标识，方便与原版区分）或 **原版图标**
-- 高级设置：按需调整 `NO_PROXY` 绕过列表（默认放行局域网私有网段 CIDR 与 `*.local`）、菜单栏常驻监控、开机登录自启
-
-点击右下角 **重建副本并启动**（或 **保存并极速启动**）即可。
-
-#### 情况 B：你的 Clash 端口不是 7890
-
-如果你使用的是其他 mixed port，例如 `7893`：
-
-- 代理 Host：`127.0.0.1`
-- SOCKS5 端口：`7893`
-- 环境变量协议：`http`
-- 环境变量端口：`7893`
-
-如果你使用的是独立 SOCKS5 端口，例如 `7891`：
-
-- 代理 Host：`127.0.0.1`
-- SOCKS5 端口：`7891`
-- 环境变量协议：`socks5`
-- 环境变量端口：`7891`
-
-### Step 4: 锁定到 Dock 与菜单栏常驻
-
-1. 代理版 Antigravity 启动后，右键 Dock 上正在运行的图标 → **「选项 → 在程序坞中保留」**（建议将原版 Antigravity 从 Dock 移除，避免日常误点）。
-2. Antigravity Pilot 主窗口关闭或启动后会自动缩入右上角菜单栏（Dock 中不留第二个图标），在菜单栏直接显示紧凑指标（如 `188K · 89%`），点击可弹出上下文/配额/今日消耗面板。
-3. **何时需要打开主窗口**：查看 20 周 Token 热力图与模型费用账单、修改代理端口/`NO_PROXY`（0.1 秒热更新），或原版 `/Applications/Antigravity.app` 更新后需要刷新副本。
-
-配置保存在 `~/Library/Application Support/Antigravity Pilot/config.json`。
+1. 代理版 Antigravity 启动后，右键 Dock 上正在运行的图标 → **「选项 → 在程序坞中保留」**（可将原版图标移出 Dock 以免误点）。
+2. 关闭 `Antigravity Pilot` 主窗口后自动缩入右上角菜单栏（Dock 仅保留正在运行的 Antigravity 一个图标），显示紧凑指标（如 `188K · 89%`），点击可展开快捷监控浮窗。
+3. 配置文件保存在 `~/Library/Application Support/Antigravity Pilot/config.json`。
 
 ---
 
-## 图标切换与自定义图标
+## 日常使用与维护
 
-### 在两种内置图标样式间切换
+### 图标切换与自定义图标
 
-在 `/Applications/Antigravity Pilot.app` 主窗口的 **应用图标** 栏可直接切换：
+- **切换内置样式**：在主窗口「应用图标样式」可随时在 **Pilot 标识** 与 **原版图标** 间切换（仅作用于代理副本，`/Applications/Antigravity Pilot.app` 伴侣始终保持 `PILOT` 图标以便区分）。
+- **自定义 PNG 图标**：替换仓库根目录 `icon.png`（建议 `1024×1024` 透明底、居中 `824×824`、留白 `100 px`），再运行 `./build.sh` 即可。
 
-- **默认 Pilot 图标**：将 Runtime 副本替换成仓库里的带 `PILOT` 标识图标（遵循 macOS HIG 留白规范），方便在 Dock 上区分原版与 Pilot 代理版。
-- **原版图标**：保留原版 Antigravity 的扁平锐利 `icon.icns` 与原版 `app.asar`，并移除 `CFBundleIconName`（同时保留磁盘上的 `Assets.car` 以防止 Electron 在运行期覆盖 Dock 图标），在 macOS 13–15 上呈现清晰锐利的原版图标（注意：`/Applications/Antigravity Pilot.app` 伴侣本体始终保持 `PILOT` 图标用于区分）。
+### 更新 Pilot 与原版 Antigravity
 
-### 替换为自己的 PNG 图标
+- **更新 Antigravity Pilot 本体**：点击左侧边栏底部版本号可打开软件更新浮窗，支持自动检测 GitHub Releases、直连/代理双路由下载 DMG 并校验 SHA-256 后原地替换重启。
+- **更新原版 `/Applications/Antigravity.app`**：原版更新后，从 Dock 启动代理副本会自动提示版本变化。先退出运行中的 Antigravity，再打开 `/Applications/Antigravity Pilot.app` 重建副本即可，Dock 固定位置不变。
 
-如果你想将默认 Pilot 图标换成完全自定义的图案：
+### 停止后台进程
 
-1. 用新的 PNG 图片替换仓库根目录的 `icon.png`（建议遵循 macOS HIG 规范：`1024×1024` 透明底画布，圆角主体居中 `824×824`、四周留白 `100 px`）。
-2. 重新构建：
-
-```bash
-./build.sh
-```
-
----
-
-## 更新 Antigravity
-
-Antigravity 更新后，不需要重新下载 `Antigravity Pilot.app`。
-
-当原版 `/Applications/Antigravity.app` 更新后，从 Dock 启动 Runtime 副本时会在右上角通知并自动弹出一个 4 秒自动关闭的提醒框，提示原版版本已变化；打开 `/Applications/Antigravity Pilot.app` 主窗口也会在顶部高亮提示重建。
-
-推荐更新流程：
-
-1. 先用原版 `/Applications/Antigravity.app` 完成更新，然后**完全退出** Antigravity。
-2. 打开 `/Applications/Antigravity Pilot.app`（或直接利用冲突检测栏一键「退出旧进程并重建」），点击重建副本并启动。
-3. 原本固定在 Dock 上的图标位置保持不变，无需重新固定。
-
----
-
-## 停止后台进程
-
-通常直接从菜单栏或 `Cmd + Q` 退出即可。
-
-如果遇到残留进程，可以在源码目录运行：
+通常使用 `Cmd + Q` 或从菜单栏退出即可；若需清理残留子进程（含 Helper 进程），可在仓库目录运行：
 
 ```bash
 ./stop-antigravity-proxy.sh
 ```
 
-该脚本会同时检查并停止新版 Runtime 进程（`~/Library/Application Support/Antigravity Pilot/Runtime/Antigravity-Pilot.app`）、旧版 `Antigravity Proxy` 进程以及源码目录开发调试副本进程。
+### 卸载与清理
 
----
-
-## 卸载与清理
-
-1. 如已安装应用内看板插件，可先在「应用内插件」页点击 **卸载**（或手动删除 `~/.gemini/config/plugins/antigravity-pilot`）。
-2. 完全退出 Antigravity 与菜单栏中的 Antigravity Pilot。
-3. 从 Dock 移除保留的代理版图标，并删除 `/Applications/Antigravity Pilot.app`。
-4. 删除 Runtime 副本与保存的配置文件（如有旧版目录可一并清理）：
+1. 若安装了应用内看板，可在 **应用内插件** 页签点击 **卸载**。
+2. 退出 Antigravity 与菜单栏中的 Antigravity Pilot，取消固定 Dock 图标并删除 `/Applications/Antigravity Pilot.app`。
+3. 清理用户空间隔离目录（原版 `/Applications/Antigravity.app` 全程未受任何修改）：
 
 ```bash
 rm -rf "$HOME/Library/Application Support/Antigravity Pilot"
@@ -199,154 +121,94 @@ rm -rf "$HOME/Library/Application Support/Antigravity Proxy"
 rm -rf "$HOME/.gemini/config/plugins/antigravity-pilot"
 ```
 
-原版 `/Applications/Antigravity.app` 不会受到任何影响。
-
 ---
 
-## 工作原理
+## 主要功能实现原理
 
-### 为什么不直接注入原版 App
-
-macOS 上的 Google 原版 `/Applications/Antigravity.app` 开启了 **Hardened Runtime（强化运行时）**，且官方签名不包含允许动态库注入的 entitlement（`com.apple.security.cs.allow-dyld-environment-variables`）。系统会直接忽略对原版 App 设置的 `DYLD_INSERT_LIBRARIES`。
-
-因此本项目保持原版不动，在用户本机复制一份单层 Runtime 副本，并动态提取原版 Entitlements 合并注入权限后执行 ad-hoc 重签名。
-
-### 单层结构、三通道拦截与免重建热更新
-
-- **单层扁平 Runtime**：`AntigravityProxyLauncher` 与原版 `Antigravity` 二进制同处于 `Runtime/Antigravity-Pilot.app/Contents/MacOS/`，启动时优先读取外置 `~/Library/Application Support/Antigravity Pilot/proxy.env`（再由 Bundle 内置 `proxy.env` 补齐 `AG_SOURCE_VERSION`），随后原地 **`execv()`** 拉起 `Antigravity` 主程序，PID 与 Bundle 保持同一身份。
-- **三通道流量接管**：
-  1. **`libantigravity_proxy.dylib`（`__DATA,__interpose`）**：拦截 `getaddrinfo()` / `freeaddrinfo()`（通过拥有指针注册表 `owned_ai_ptrs` 安全分流系统与本库分配节点）与 `connect()`；外网域名分配 `198.18.0.0/15` FakeIP 并通过 SOCKS5 `ATYP=0x03` 域名 `CONNECT` 转发，匹配 `NO_PROXY` 的域名后缀与私网 CIDR 直接直连绕过；
-  2. **环境变量注入**：同步导出 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY`、`NO_PROXY` 与 `NODE_USE_ENV_PROXY=1`，覆盖 `language_server`（Go）及 Node 22+ 原生请求；
-  3. **Chromium 原生参数**：仅针对主 Chromium 进程自动追加 `--proxy-server` 与 `--proxy-bypass-list`（跳过 `ELECTRON_RUN_AS_NODE` 与 `--type=` 子进程）。
-- **纯原生监控采集（零入侵）**：
-  - 实时上下文与共享配额池：发现 `~/.gemini/antigravity/daemon/hub_*.json` 存活实例后，通过强制禁代理的回环 `URLSession` 调用本地 Connect-RPC（`GetUserStatus`、`GetAllCascadeTrajectories`、`GetCascadeTrajectoryGeneratorMetadata`）；
-  - 历史热力图与账单：增量流式扫描 `~/.gemini/antigravity/brain/*/.system_generated/logs/transcript.jsonl`，本地缓存于 `usage_cache.json`。
-
----
-
-## 本地构建
-
-需要 Xcode Command Line Tools：
-
-```bash
-xcode-select --install
+```mermaid
+flowchart LR
+    Orig["/Applications/Antigravity.app (只读不动)"] -->|"首次复制 + 合并 Entitlements"| RT["用户空间隔离副本 Antigravity-Pilot.app"]
+    Pilot["Antigravity Pilot.app (原生 SwiftUI 伴侣)"] -->|"0.1s 极速热更新"| Env["外置 proxy.env"]
+    Env -->|"启动时读取"| Launcher["AntigravityProxyLauncher (execv 原地拉起)"]
+    Launcher --> RT
+    RT -->|"通道 1: dylib interpose FakeIP + SOCKS5"| Proxy["本地代理 (Clash / Surge / sing-box)"]
+    RT -->|"通道 2: HTTP/HTTPS/ALL_PROXY + NODE_USE_ENV_PROXY"| Proxy
+    RT -->|"通道 3: 主 Chromium --proxy-server"| Proxy
+    LS["本地 Language Server (hub_*.json)"] -->|"回环 Connect-RPC (只读零侵入)"| Pilot
+    Logs["brain/*/transcript.jsonl"] -->|"增量扫描 + 本地缓存"| Pilot
+    Pilot -->|"一键部署至 ~/.gemini/config/plugins"| MCP["官方 MCP App 插件 (零 JS 注入)"]
+    LS -->|"回环 Connect-RPC"| MCP
+    Logs -->|"增量扫描"| MCP
 ```
 
-默认直接运行即可编译 **macOS 13.0+ Universal（`arm64` + `x86_64`）** 产物：
+1. **零侵入隔离副本**：原版 `/Applications/Antigravity.app` 开启了 Hardened Runtime 会屏蔽外部动态库注入，因此 Pilot 保持原版只读不动，仅在用户目录创建单层隔离 Runtime 副本并合并 Entitlements 后本地重签名。
+2. **三通道免 TUN 代理**：由 `libantigravity_proxy.dylib`（`__DATA,__interpose` + `198.18.0.0/15` FakeIP 转 SOCKS5）、Go/Node 环境变量及主 Chromium `--proxy-server` 参数协同接管全部进程流量，并按 `NO_PROXY` 规则直连局域网 CIDR。
+3. **0.1 秒热更新与单图标**：`AntigravityProxyLauncher` 优先读取外置 `proxy.env` 后原地 `execv()` 拉起主程序；改端口或 `NO_PROXY` 仅重写外置文件，无需重复制和重签名。
+4. **原生实时监控**：自动发现本地 `~/.gemini/antigravity/daemon/hub_*.json`，通过禁用代理的回环 Connect-RPC 读取上下文占用、性能指标与模型共享配额池。
+5. **增量用量与账单**：按 `size + mtime` 增量扫描 `transcript.jsonl` 并缓存至 `usage_cache.json`，结合内置/自定义定价表估算每日及分模型 API 费用。
+6. **官方应用内看板与图标同步**：通过官方 MCP Apps（SEP-1865）提供零 JS 注入、0 Token 刷新的应用内看板；切换 Pilot 图标时同步按 Chromium Pickle 4 字节对齐更新 `app.asar` 与 `ElectronAsarIntegrity`。
+
+---
+
+## 本地构建与测试
+
+### 编译与打包
+
+需要 Xcode Command Line Tools（`xcode-select --install`）：
 
 ```bash
+# 编译 macOS 13.0+ Universal (arm64 + x86_64) 应用与原生二进制
 ./build.sh
+
+# 运行 Web 类型检查、重编前端看板并打包 .dmg 与 latest.json（输出 SHA256）
+npm --prefix src/McpAppWeb run typecheck && ./build.sh --build-web --dmg
 ```
 
-如果需要重新编译前端看板并打包可分发的 `.dmg` 安装镜像（同时计算 SHA256）：
+常用参数与环境变量：`--notes-file <path>` 可传入发布说明；支持 `APP_VERSION`（默认 `0.1.0`）、`MIN_MACOS`（默认 `13.0`）、`ARCHS`（默认 `"arm64 x86_64"`）、`GITHUB_REPO` 覆盖。
+
+主要产物：`build/Antigravity Pilot.app`、`build/Antigravity-Pilot-v0.1.0-macOS13-universal.dmg`、`build/latest.json`、`build/antigravity-pilot-mcp`、`build/libantigravity_proxy.dylib`、`build/AntigravityProxyLauncher`、`build/test_client`。
+
+### 自动化校验与本地抓包测试
 
 ```bash
-./build.sh --build-web --dmg
-```
-
-如需自定义版本号、最低系统版本或目标架构，可以通过环境变量覆盖（默认 `APP_VERSION=0.1.0`、`MIN_MACOS=13.0`、`ARCHS="arm64 x86_64"`）：
-
-```bash
-APP_VERSION=0.1.0 MIN_MACOS=14.0 ARCHS=arm64 ./build.sh --dmg
-```
-
-构建产物：
-
-```text
-build/Antigravity Pilot.app
-build/Antigravity-Pilot-v0.1.0-macOS13-universal.dmg   # 传入 --dmg 时生成
-build/antigravity-pilot-mcp
-build/libantigravity_proxy.dylib
-build/AntigravityProxyLauncher
-build/test_client
-```
-
-也支持直接对构建好的二进制运行非 UI 原生冒烟校验：
-
-```bash
+# 非 UI 原生冒烟测试 & MCP Server 端到端协议测试
 "build/Antigravity Pilot.app/Contents/MacOS/AntigravityProxyBuilder" --smoke-test
-```
+python3 tests/test_mcp_server.py
 
----
-
-## 本地测试
-
-验证 FakeIP 分配、SOCKS5 `CONNECT` 与 `NO_PROXY` 绕过：
-
-```bash
-./build.sh
+# 验证 FakeIP 分配与 SOCKS5 ATYP=0x03 域名转发（在两个终端依次执行）
 ./tests/socks5_capture.py 18081
+AG_PROXY=socks5://127.0.0.1:18081 AG_PROXY_LOG=1 \
+  DYLD_INSERT_LIBRARIES="$PWD/build/libantigravity_proxy.dylib" \
+  ./build/test_client login.example.test 443
 ```
 
-另开一个终端：
-
-```bash
-AG_PROXY=socks5://127.0.0.1:18081 \
-AG_PROXY_LOG=1 \
-DYLD_INSERT_LIBRARIES="$PWD/build/libantigravity_proxy.dylib" \
-./build/test_client login.example.test 443
-```
-
-成功时，SOCKS5 测试服务会输出：
-
-```text
-captured login.example.test:443
-```
+成功时捕获服务会输出 `captured login.example.test:443`。
 
 ---
 
 ## 故障排查
 
-### 提示“已损坏，无法打开”或“无法验证开发者”
-
-```bash
-xattr -cr "/Applications/Antigravity Pilot.app"
-```
-
-### 点击重建时提示需要安装 Xcode 命令行开发者工具
-
-```bash
-xcode-select --install
-```
-
-### 诊断胶囊提示「非 SOCKS5 端口」或「外网未通」
-
-- 若提示 **非 SOCKS5 端口**：说明所填端口是纯 HTTP 端口而非 SOCKS5 / 混合端口，请检查 Clash Verge 的 Mixed Port（默认 `7890`）或独立 SOCKS5 端口。
-- 若提示 **外网未通**：说明本机代理端口可达，但代理节点无法访问 `www.google.com/generate_204`，请检查代理客户端节点与出站规则。
-
-### 切换为「原版图标」或「默认 Pilot 图标」后 Dock 图标没变化
-
-- 切换图标会自动刷新 LaunchServices 并重启 Dock。
-- 随开关变化的是 **Runtime 副本**（`~/Library/Application Support/Antigravity Pilot/Runtime/Antigravity-Pilot.app`），`/Applications/Antigravity Pilot.app` 本身始终保持 `PILOT` 图标。
-- 极少数情况缓存残留时，可在完全退出 Antigravity 后执行 `killall Dock`。
-
-### 启动后显示空白的 Electron 欢迎页（提示 `To run a local app...`）
-
-请在退出后打开 `/Applications/Antigravity Pilot.app`，在「高级设置」点击 **强制完整重建副本**，重新按 Chromium Pickle 4 字节对齐同步 `ElectronAsarIntegrity` 即可。
-
-### 原版 Antigravity 打不开
-
-不要同时运行原版和 Pilot 代理版（共用同一个用户数据目录和单实例锁）。在 Pilot 主窗口顶部冲突提示栏直接点击 **优雅退出并启动** 即可自动完成切换。
+- **提示“已损坏，无法打开”或“无法验证开发者”**：在终端执行 `xattr -cr "/Applications/Antigravity Pilot.app"`。
+- **点击重建提示缺少 Xcode 命令行工具**：执行 `xcode-select --install`。
+- **诊断链提示「非 SOCKS5 端口」或「外网未通」**：前者说明填入的是纯 HTTP 端口，请改用 Clash Mixed Port（如 `7890` / `7897`）或独立 SOCKS5 端口；后者表示端口可达但代理节点未能访问 `www.google.com/generate_204`，请检查代理节点与规则。
+- **切换图标后 Dock 图标未立即变化**：完全退出 Antigravity 后执行 `killall Dock`。
+- **启动后显示空白 Electron 页面（`To run a local app...`）**：退出后在「高级设置」点击 **强制完整重建副本** 重新同步 `ElectronAsarIntegrity`。
+- **原版与代理版不能同时打开**：两者共用同一个用户数据目录与单实例锁，请在顶部冲突栏点击 **优雅退出并启动** 自动切换。
 
 ---
 
 ## 限制
 
-- dylib hook 只处理 TCP `connect()`，不处理 UDP/QUIC，且目前仅支持无认证 SOCKS5 代理。
-- 代理地址建议使用数字 IP，例如 `127.0.0.1`。
-- 生成/首次重建 Runtime 副本需要复制完整 Antigravity，会等待几秒钟；此后仅修改端口/协议/绕过列表支持 0.1 秒免重建热更新，日常从 Dock 启动可秒开。
-- 历史费用账单基于内置公开 API 参考定价表估算（支持在 `~/Library/Application Support/Antigravity Pilot/custom_pricing.json` 自定义覆写），不代表实际订阅扣费。
-- `Antigravity Pilot.app` 目前为 ad-hoc 签名；公开分发时建议进一步做 Developer ID 签名和 notarization。
+- dylib hook 仅拦截 TCP `connect()`，不处理 UDP/QUIC，且目前仅支持无认证 SOCKS5 代理。
+- 代理地址建议使用数字 IP（如 `127.0.0.1` 或 `[::1]`）或 `localhost`。
+- 历史费用账单基于内置公开 API 参考定价表估算（可在 `~/Library/Application Support/Antigravity Pilot/custom_pricing.json` 覆写），不代表实际订阅扣费。
+- `Antigravity Pilot.app` 目前使用本地 ad-hoc 签名；公开分发时建议进一步使用 Developer ID 签名并公证。
 
 ---
 
-## 致谢
+## 致谢与许可证
 
 - [OkamiFeng/mac-antigravity-proxy-dylib](https://github.com/OkamiFeng/mac-antigravity-proxy-dylib)：本项目最初基于该项目的早期版本演进与重构而来，感谢原作者在 macOS dylib 代理注入与签名流程上的开创性工作。
 - [yuaotian/antigravity-proxy](https://github.com/yuaotian/antigravity-proxy)：感谢 Windows 版本的 DLL 注入代理拦截思路启发（本项目在 macOS 上采用 `DYLD_INSERT_LIBRARIES` 注入 dylib 实现）。
-
----
-
-## 许可证
 
 MIT License。详见 [LICENSE](LICENSE)。
