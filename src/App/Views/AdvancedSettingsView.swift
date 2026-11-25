@@ -1,0 +1,223 @@
+import AppKit
+import SwiftUI
+
+struct AdvancedSettingsView: View {
+    @Environment(\.appLanguage) private var lang
+    @ObservedObject var appModel: AppModel
+    var onHideToMenuBar: () -> Void
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 10) {
+                languageCard
+                    .disabled(appModel.isWorking)
+
+                noProxyCard
+                    .disabled(appModel.isWorking)
+
+                behaviorCard
+                    .disabled(appModel.isWorking)
+
+                maintenanceCard
+                    .disabled(appModel.isWorking)
+
+                if let error = appModel.errorMessage {
+                    messageBanner(error, isError: true)
+                } else if let success = appModel.bannerSuccessMessage {
+                    messageBanner(success, isError: false)
+                }
+            }
+            .padding(.horizontal, 22)
+            .padding(.vertical, 12)
+        }
+        .onChange(of: appModel.config.appLanguage) { _ in
+            appModel.applyLanguageChange()
+        }
+        .onChange(of: appModel.config.noProxy) { _ in
+            appModel.scheduleSaveNoProxy()
+        }
+        .onChange(of: appModel.config.enableMenuBarMonitor) { _ in
+            appModel.savePreferencesOnly()
+        }
+        .onChange(of: appModel.config.showMenuBarMetrics) { _ in
+            appModel.savePreferencesOnly()
+        }
+    }
+
+    private var languageCard: some View {
+        PilotCard(padding: 12) {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 12) {
+                    Label(L10n.t("界面语言", "Language", lang), systemImage: "globe")
+                        .font(.subheadline.weight(.semibold))
+
+                    Spacer()
+
+                    Picker("", selection: $appModel.config.appLanguage) {
+                        ForEach(AppLanguage.allCases) { option in
+                            Text(option.displayName(in: lang)).tag(option)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .frame(width: 185)
+                }
+
+                if appModel.config.appLanguage == .system {
+                    Text(L10n.t(
+                        zhHans: "当前跟随系统语言：简体中文（不支持的系统语言默认显示 English）",
+                        zhHant: "目前跟隨系統語言：繁體中文（不支援的系統語言預設顯示 English）",
+                        en: "Following system language: English (unsupported languages default to English)",
+                        ru: "Язык системы: Русский (неподдерживаемые языки по умолчанию — English)",
+                        lang
+                    ))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    private var noProxyCard: some View {
+        PilotCard(padding: 12) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Label(L10n.t("NO_PROXY 绕过规则", "NO_PROXY Bypass Rules", lang), systemImage: "arrow.triangle.branch")
+                        .font(.subheadline.weight(.semibold))
+                    Spacer()
+                    Button(L10n.t("恢复默认", "Reset Defaults", lang)) {
+                        appModel.config.noProxy = ProxyConfig.defaultNoProxy
+                        appModel.saveNoProxyNow()
+                    }
+                    .controlSize(.small)
+                }
+
+                Text(L10n.t(
+                    "支持局域网 CIDR（如 192.168.0.0/16）与域名后缀（如 *.local），同时作用于 dylib hook、环境变量与 Chromium 主进程。",
+                    "Supports LAN CIDRs (e.g. 192.168.0.0/16) and domain suffixes (e.g. *.local) across dylib hook, env vars, and Chromium.",
+                    lang
+                ))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+                TextField("localhost,127.0.0.1,192.168.0.0/16,*.local", text: $appModel.config.noProxy, axis: .vertical)
+                    .textFieldStyle(.roundedBorder)
+                    .lineLimit(2...4)
+                    .font(.system(.caption, design: .monospaced))
+            }
+        }
+    }
+
+    private var behaviorCard: some View {
+        PilotCard(padding: 12) {
+            VStack(alignment: .leading, spacing: 8) {
+                Label(L10n.t("菜单栏与开机自启", "Menu Bar & Login Item", lang), systemImage: "menubar.rectangle")
+                    .font(.subheadline.weight(.semibold))
+
+                Divider()
+
+                Toggle(
+                    L10n.t(
+                        "显示顶部菜单栏图标（关闭窗口后缩入菜单栏常驻监控）",
+                        "Show top menu bar icon (minimize to menu bar when window closes)",
+                        lang
+                    ),
+                    isOn: $appModel.config.enableMenuBarMonitor
+                )
+                .font(.callout)
+
+                if appModel.config.enableMenuBarMonitor {
+                    Toggle(
+                        L10n.t(
+                            "菜单栏显示实时上下文与配额指标（如 188K · 89%）",
+                            "Show live context & quota metrics in menu bar (e.g. 188K · 89%)",
+                            lang
+                        ),
+                        isOn: $appModel.config.showMenuBarMetrics
+                    )
+                    .font(.callout)
+                    .padding(.leading, 18)
+                }
+
+                Divider()
+
+                HStack {
+                    Toggle(
+                        L10n.t("开机登录时自动启动 Antigravity Pilot", "Launch Antigravity Pilot at login", lang),
+                        isOn: Binding(
+                            get: { appModel.loginItemEnabled },
+                            set: { appModel.setLoginItem($0) }
+                        )
+                    )
+                    .font(.callout)
+                    Spacer()
+                    PilotStatusPill(
+                        text: appModel.loginItemStatus,
+                        color: appModel.loginItemEnabled ? .green : .secondary,
+                        showDot: false
+                    )
+                }
+            }
+        }
+    }
+
+    private var maintenanceCard: some View {
+        PilotCard(padding: 12) {
+            VStack(alignment: .leading, spacing: 8) {
+                Label(L10n.t("通道摘要与副本维护", "Channel Summary & Maintenance", lang), systemImage: "wrench.and.screwdriver")
+                    .font(.subheadline.weight(.semibold))
+
+                PilotRecessedBox(padding: 9) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("dylib Hook: \(appModel.config.hookProxyURL)")
+                            .font(.system(.caption, design: .monospaced))
+                        Text("Env / Chromium: \(appModel.config.envProxyURL)")
+                            .font(.system(.caption, design: .monospaced))
+                        Text("\(L10n.t("配置目录", "Config Dir", lang)): \(appModel.support.root.path)")
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                }
+
+                HStack {
+                    Button(L10n.t("打开配置目录", "Open Config Folder", lang)) {
+                        try? appModel.support.ensureRoot()
+                        NSWorkspace.shared.open(appModel.support.root)
+                    }
+                    .controlSize(.small)
+
+                    Spacer()
+
+                    Button(L10n.t("强制完整重建副本", "Force Full Rebuild", lang)) {
+                        appModel.saveAndStart(
+                            forceRebuild: true,
+                            terminateRunningFirst: !appModel.runningInstances.isEmpty
+                        ) {
+                            onHideToMenuBar()
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.orange)
+                    .controlSize(.small)
+                }
+            }
+        }
+    }
+
+    private func messageBanner(_ message: String, isError: Bool) -> some View {
+        let color: Color = isError ? .red : .green
+        return PilotCard(padding: 11, accentTint: color) {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: isError ? "exclamationmark.octagon.fill" : "checkmark.circle.fill")
+                    .foregroundStyle(color)
+                    .padding(.top, 1)
+                Text(message)
+                    .font(.footnote)
+                    .foregroundStyle(color)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+}

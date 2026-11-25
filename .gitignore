@@ -1,0 +1,39 @@
+# Node dependencies (prebuilt dist/dashboard.html is committed)
+node_modules/
+
+# Build outputs
+build/
+*.dSYM/
+*.icns
+*.preview.png
+
+# Generated app bundles and release archives
+Antigravity-Pilot.app/
+Antigravity-Proxy.app/
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.dmg
+
+# Logs and local runtime files
+*.log
+*.pid
+*.env.local
+
+# Python cache
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# macOS
+.DS_Store
+Icon?
+
+# Editors
+.idea/
+.vscode/
+*.swp
+*.swo
