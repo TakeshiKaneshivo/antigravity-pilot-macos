@@ -19,6 +19,33 @@
 
 ---
 
+## Скриншоты
+
+<table>
+  <tr>
+    <td align="center" width="33.3%">
+      <img src="docs/screenshots/proxy-overview.jpg" width="100%" alt="Antigravity Pilot - Прокси">
+      <br><sub>Прокси (3-этапная проверка и хот-апдейт)</sub>
+    </td>
+    <td align="center" width="33.3%">
+      <img src="docs/screenshots/live-monitor.jpg" width="100%" alt="Antigravity Pilot - Монитор">
+      <br><sub>Монитор (Контекст и пулы квот)</sub>
+    </td>
+    <td align="center" width="33.3%">
+      <img src="docs/screenshots/usage-billing.jpg" width="100%" alt="Antigravity Pilot - Расход и счёт">
+      <br><sub>Расход и счёт (Карта за 20 недель и оценка)</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" colspan="3">
+      <img src="docs/screenshots/in-app-plugin.jpg" width="100%" alt="Встроенная панель MCP в Antigravity">
+      <br><sub>Встроенная панель MCP в Antigravity (Полный экран в боковой панели · Карта за 1 год и модели)</sub>
+    </td>
+  </tr>
+</table>
+
+---
+
 ## Нулевое вмешательство
 
 | Аспект | Antigravity Pilot for macOS |
@@ -44,6 +71,7 @@
 
 ## Содержание
 
+- [Скриншоты](#скриншоты)
 - [Нулевое вмешательство](#нулевое-вмешательство)
 - [Основные возможности](#основные-возможности)
 - [Быстрый старт](#быстрый-старт)
@@ -53,6 +81,7 @@
 - [Устранение неполадок](#устранение-неполадок)
 - [Ограничения](#ограничения)
 - [Благодарности и лицензия](#благодарности-и-лицензия)
+- [Контакты](#контакты)
 
 ---
 
@@ -196,3 +225,9 @@ AG_PROXY=socks5://127.0.0.1:18081 AG_PROXY_LOG=1 \
 - [yuaotian/antigravity-proxy](https://github.com/yuaotian/antigravity-proxy): за идею перехвата сетевых вызовов (DLL-инъекция в Windows и `DYLD_INSERT_LIBRARIES` в macOS).
 
 MIT License. Подробности в [LICENSE](LICENSE).
+
+---
+
+## Контакты
+
+По вопросам сотрудничества и коммерческих предложений: [takeshikaneshivo@gmail.com](mailto:takeshikaneshivo@gmail.com)

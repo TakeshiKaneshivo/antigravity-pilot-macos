@@ -19,6 +19,33 @@
 
 ---
 
+## 界面预览
+
+<table>
+  <tr>
+    <td align="center" width="33.3%">
+      <img src="docs/screenshots/proxy-overview.jpg" width="100%" alt="Antigravity Pilot - 代理概览">
+      <br><sub>代理概览（三阶健康链路 & 热更新）</sub>
+    </td>
+    <td align="center" width="33.3%">
+      <img src="docs/screenshots/live-monitor.jpg" width="100%" alt="Antigravity Pilot - 实时监控">
+      <br><sub>实时监控（上下文占用 & 共享配额池）</sub>
+    </td>
+    <td align="center" width="33.3%">
+      <img src="docs/screenshots/usage-billing.jpg" width="100%" alt="Antigravity Pilot - 用量与账单">
+      <br><sub>用量与账单（20 周热力图 & 费用估算）</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" colspan="3">
+      <img src="docs/screenshots/in-app-plugin.jpg" width="100%" alt="Antigravity 应用内 MCP 看板">
+      <br><sub>Antigravity 应用内 MCP 看板（左侧边栏全屏视图 · 1 年活跃热力图与模型占比）</sub>
+    </td>
+  </tr>
+</table>
+
+---
+
 ## 零侵入设计
 
 | 维度 | Antigravity Pilot for macOS |
@@ -44,6 +71,7 @@
 
 ## 目录
 
+- [界面预览](#界面预览)
 - [零侵入设计](#零侵入设计)
 - [主要功能](#主要功能)
 - [快速开始](#快速开始)
@@ -53,6 +81,7 @@
 - [故障排查](#故障排查)
 - [限制](#限制)
 - [致谢与许可证](#致谢与许可证)
+- [联系与合作](#联系与合作)
 
 ---
 
@@ -196,3 +225,9 @@ AG_PROXY=socks5://127.0.0.1:18081 AG_PROXY_LOG=1 \
 - [yuaotian/antigravity-proxy](https://github.com/yuaotian/antigravity-proxy)：感谢 Windows 版本的 DLL 注入代理拦截思路启发（本项目在 macOS 上采用 `DYLD_INSERT_LIBRARIES` 注入 dylib 实现）。
 
 MIT License。详见 [LICENSE](LICENSE)。
+
+---
+
+## 联系与合作
+
+商务合作请联系：[takeshikaneshivo@gmail.com](mailto:takeshikaneshivo@gmail.com)

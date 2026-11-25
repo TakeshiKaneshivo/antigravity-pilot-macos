@@ -19,6 +19,33 @@ A **zero-intrusion**, 100% native macOS companion for Antigravity. Route Antigra
 
 ---
 
+## Screenshots
+
+<table>
+  <tr>
+    <td align="center" width="33.3%">
+      <img src="docs/screenshots/proxy-overview.jpg" width="100%" alt="Antigravity Pilot - Proxy Overview">
+      <br><sub>Proxy Overview (3-Stage Health & Hot Update)</sub>
+    </td>
+    <td align="center" width="33.3%">
+      <img src="docs/screenshots/live-monitor.jpg" width="100%" alt="Antigravity Pilot - Live Monitor">
+      <br><sub>Live Monitor (Context Gauge & Quota Pools)</sub>
+    </td>
+    <td align="center" width="33.3%">
+      <img src="docs/screenshots/usage-billing.jpg" width="100%" alt="Antigravity Pilot - Usage & Billing">
+      <br><sub>Usage & Billing (20-Week Heatmap & Cost)</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" colspan="3">
+      <img src="docs/screenshots/in-app-plugin.jpg" width="100%" alt="Antigravity In-App MCP Dashboard">
+      <br><sub>Antigravity In-App MCP Dashboard (Left Sidebar Full View · 1-Year Heatmap & Model Breakdown)</sub>
+    </td>
+  </tr>
+</table>
+
+---
+
 ## Zero-Intrusion Design
 
 | Dimension | Antigravity Pilot for macOS |
@@ -44,6 +71,7 @@ A **zero-intrusion**, 100% native macOS companion for Antigravity. Route Antigra
 
 ## Table of Contents
 
+- [Screenshots](#screenshots)
 - [Zero-Intrusion Design](#zero-intrusion-design)
 - [Key Features](#key-features)
 - [Quick Start](#quick-start)
@@ -53,6 +81,7 @@ A **zero-intrusion**, 100% native macOS companion for Antigravity. Route Antigra
 - [Troubleshooting](#troubleshooting)
 - [Limitations](#limitations)
 - [Credits & License](#credits--license)
+- [Contact](#contact)
 
 ---
 
@@ -196,3 +225,9 @@ When working properly, the capture server prints `captured login.example.test:44
 - [yuaotian/antigravity-proxy](https://github.com/yuaotian/antigravity-proxy): Inspired the network hooking approach (Windows DLL injection vs. `DYLD_INSERT_LIBRARIES` dylib injection on macOS).
 
 MIT License. See [LICENSE](LICENSE).
+
+---
+
+## Contact
+
+For business inquiries & collaboration: [takeshikaneshivo@gmail.com](mailto:takeshikaneshivo@gmail.com)
