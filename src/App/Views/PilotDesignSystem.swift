@@ -33,9 +33,347 @@ struct VisualEffectBackground: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: NSVisualEffectView, context: Context) {
-        nsView.material = material
-        nsView.blendingMode = blendingMode
-        nsView.state = .followsWindowActiveState
+        if nsView.material != material {
+            nsView.material = material
+        }
+        if nsView.blendingMode != blendingMode {
+            nsView.blendingMode = blendingMode
+        }
+        if nsView.state != .followsWindowActiveState {
+            nsView.state = .followsWindowActiveState
+        }
+    }
+}
+
+/// Single-pass two-column layout with a fixed trailing column and equalized row height.
+/// Avoids the multi-pass ideal-size probing of `HStack.fixedSize(horizontal: false, vertical: true)`
+/// during continuous width animations (e.g. sidebar collapse/expand).
+struct EqualHeightTwoColumnLayout: Layout {
+    var spacing: CGFloat = 12
+    var trailingWidth: CGFloat = 230
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard subviews.count == 2 else {
+            return subviews.first?.sizeThatFits(proposal) ?? .zero
+        }
+        let totalWidth = proposal.width ?? (trailingWidth * 2 + spacing)
+        let leadingWidth = max(0, totalWidth - trailingWidth - spacing)
+        let leadingHeight = subviews[0].sizeThatFits(ProposedViewSize(width: leadingWidth, height: nil)).height
+        let trailingHeight = subviews[1].sizeThatFits(ProposedViewSize(width: trailingWidth, height: nil)).height
+        return CGSize(width: totalWidth, height: max(leadingHeight, trailingHeight))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        guard subviews.count == 2 else {
+            subviews.first?.place(at: bounds.origin, proposal: ProposedViewSize(bounds.size))
+            return
+        }
+        let leadingWidth = max(0, bounds.width - trailingWidth - spacing)
+        subviews[0].place(
+            at: CGPoint(x: bounds.minX, y: bounds.minY),
+            proposal: ProposedViewSize(width: leadingWidth, height: bounds.height)
+        )
+        subviews[1].place(
+            at: CGPoint(x: bounds.minX + leadingWidth + spacing, y: bounds.minY),
+            proposal: ProposedViewSize(width: trailingWidth, height: bounds.height)
+        )
+    }
+}
+
+/// Lightweight rounded-bezel `NSTextField` wrapper that implements `sizeThatFits`
+/// directly so continuous width animations do not re-run AppKit Auto Layout passes.
+struct PilotTextField: NSViewRepresentable {
+    let placeholder: String
+    @Binding var text: String
+
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(text: $text)
+    }
+
+    func makeNSView(context: Context) -> NSTextField {
+        let field = NSTextField(frame: .zero)
+        field.placeholderString = placeholder
+        field.isBezeled = true
+        field.bezelStyle = .roundedBezel
+        field.isEditable = true
+        field.isSelectable = true
+        field.usesSingleLineMode = true
+        field.cell?.wraps = false
+        field.cell?.isScrollable = true
+        field.lineBreakMode = .byClipping
+        field.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+        field.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        field.delegate = context.coordinator
+        field.stringValue = text
+        field.isEnabled = isEnabled
+        context.coordinator.lastSyncedText = text
+        return field
+    }
+
+    func updateNSView(_ nsView: NSTextField, context: Context) {
+        context.coordinator.text = $text
+        if nsView.placeholderString != placeholder {
+            nsView.placeholderString = placeholder
+        }
+        if nsView.isEnabled != isEnabled {
+            nsView.isEnabled = isEnabled
+        }
+        if text != context.coordinator.lastSyncedText || (nsView.currentEditor() == nil && nsView.stringValue != text) {
+            nsView.stringValue = text
+            context.coordinator.lastSyncedText = text
+        }
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSTextField, context: Context) -> CGSize? {
+        CGSize(width: proposal.width ?? 160, height: 22)
+    }
+
+    final class Coordinator: NSObject, NSTextFieldDelegate {
+        var text: Binding<String>
+        var lastSyncedText = ""
+
+        init(text: Binding<String>) {
+            self.text = text
+        }
+
+        func controlTextDidChange(_ obj: Notification) {
+            guard let field = obj.object as? NSTextField else { return }
+            let next = field.stringValue
+            lastSyncedText = next
+            if text.wrappedValue != next {
+                text.wrappedValue = next
+            }
+        }
+    }
+}
+
+/// Lightweight integer port `NSTextField` wrapper avoiding `NumberFormatStyle`
+/// overhead during continuous width animations while preserving live numeric sync.
+struct PilotPortTextField: NSViewRepresentable {
+    let placeholder: String
+    @Binding var value: Int
+
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(value: $value)
+    }
+
+    func makeNSView(context: Context) -> NSTextField {
+        let field = NSTextField(frame: .zero)
+        field.placeholderString = placeholder
+        field.isBezeled = true
+        field.bezelStyle = .roundedBezel
+        field.isEditable = true
+        field.isSelectable = true
+        field.usesSingleLineMode = true
+        field.cell?.wraps = false
+        field.cell?.isScrollable = true
+        field.lineBreakMode = .byClipping
+        field.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+        field.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        field.delegate = context.coordinator
+        field.stringValue = String(value)
+        field.isEnabled = isEnabled
+        context.coordinator.lastSyncedValue = value
+        return field
+    }
+
+    func updateNSView(_ nsView: NSTextField, context: Context) {
+        context.coordinator.value = $value
+        if nsView.placeholderString != placeholder {
+            nsView.placeholderString = placeholder
+        }
+        if nsView.isEnabled != isEnabled {
+            nsView.isEnabled = isEnabled
+        }
+        let targetString = String(value)
+        if value != context.coordinator.lastSyncedValue || (nsView.currentEditor() == nil && nsView.stringValue != targetString) {
+            nsView.stringValue = targetString
+            context.coordinator.lastSyncedValue = value
+        }
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSTextField, context: Context) -> CGSize? {
+        CGSize(width: proposal.width ?? 160, height: 22)
+    }
+
+    final class Coordinator: NSObject, NSTextFieldDelegate {
+        var value: Binding<Int>
+        var lastSyncedValue: Int = 0
+
+        init(value: Binding<Int>) {
+            self.value = value
+        }
+
+        func controlTextDidChange(_ obj: Notification) {
+            guard let field = obj.object as? NSTextField else { return }
+            let trimmed = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let parsed = Int(trimmed) {
+                lastSyncedValue = parsed
+                if value.wrappedValue != parsed {
+                    value.wrappedValue = parsed
+                }
+            }
+        }
+
+        func controlTextDidEndEditing(_ obj: Notification) {
+            guard let field = obj.object as? NSTextField else { return }
+            let trimmed = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let parsed = Int(trimmed) {
+                lastSyncedValue = parsed
+                if value.wrappedValue != parsed {
+                    value.wrappedValue = parsed
+                }
+                field.stringValue = String(parsed)
+            } else {
+                let current = value.wrappedValue
+                lastSyncedValue = current
+                field.stringValue = String(current)
+            }
+        }
+    }
+}
+
+/// Pure-SwiftUI pop-up button that constructs and pops up a native `NSMenu` only on click,
+/// avoiding permanent `NSPopUpButton` Auto Layout / CoreUI redraws during width animations.
+struct PilotPresetMenuButton: View {
+    struct Option: Equatable {
+        let id: String
+        let shortTitle: String
+        let fullTitle: String
+    }
+
+    private final class FrameBox {
+        var rect: CGRect = .zero
+    }
+
+    private final class MenuActionTarget: NSObject {
+        let onSelect: (String) -> Void
+        init(onSelect: @escaping (String) -> Void) {
+            self.onSelect = onSelect
+        }
+
+        @objc func handleSelect(_ sender: NSMenuItem) {
+            guard let id = sender.representedObject as? String, id != "custom" else { return }
+            onSelect(id)
+        }
+    }
+
+    let options: [Option]
+    let selectedId: String
+    let customTitle: String
+    let onSelect: (String) -> Void
+
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.isEnabled) private var isEnabled
+    @State private var isHovered = false
+    @State private var frameBox = FrameBox()
+
+    private var selectedOption: Option? {
+        options.first(where: { $0.id == selectedId })
+    }
+
+    private var selectedShortTitle: String {
+        selectedOption?.shortTitle ?? customTitle
+    }
+
+    private var selectedFullTitle: String {
+        selectedOption?.fullTitle ?? customTitle
+    }
+
+    var body: some View {
+        Button(action: showMenu) {
+            HStack(spacing: 6) {
+                Text(selectedShortTitle)
+                    .font(.callout)
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 9.5, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 8)
+            .frame(maxWidth: .infinity)
+            .frame(height: 22)
+            .background(
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .fill(controlFill)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .strokeBorder(controlStroke, lineWidth: 0.75)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .opacity(isEnabled ? 1 : 0.5)
+        .help(selectedFullTitle)
+        .onHover { hovering in
+            isHovered = hovering
+        }
+        .background(
+            GeometryReader { geo -> Color in
+                frameBox.rect = geo.frame(in: .global)
+                return Color.clear
+            }
+        )
+    }
+
+    private var controlFill: Color {
+        if colorScheme == .dark {
+            return isHovered ? Color.white.opacity(0.14) : Color.white.opacity(0.09)
+        }
+        return isHovered ? Color(NSColor.controlBackgroundColor).opacity(0.92) : Color(NSColor.controlBackgroundColor)
+    }
+
+    private var controlStroke: Color {
+        Color.primary.opacity(colorScheme == .dark ? 0.22 : 0.16)
+    }
+
+    private func showMenu() {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        let target = MenuActionTarget(onSelect: onSelect)
+
+        for opt in options {
+            let item = NSMenuItem(
+                title: opt.fullTitle,
+                action: #selector(MenuActionTarget.handleSelect(_:)),
+                keyEquivalent: ""
+            )
+            item.target = target
+            item.representedObject = opt.id
+            item.state = (opt.id == selectedId) ? .on : .off
+            menu.addItem(item)
+        }
+
+        if selectedId == "custom" {
+            menu.addItem(.separator())
+            let customItem = NSMenuItem(title: customTitle, action: nil, keyEquivalent: "")
+            customItem.representedObject = "custom"
+            customItem.isEnabled = false
+            customItem.state = .on
+            menu.addItem(customItem)
+        }
+
+        menu.minimumWidth = max(140, frameBox.rect.width)
+
+        withExtendedLifetime(target) {
+            if let contentView = (NSApp.keyWindow ?? NSApp.mainWindow)?.contentView, frameBox.rect.width > 0 {
+                let y = contentView.isFlipped
+                    ? (frameBox.rect.maxY + 2)
+                    : (contentView.bounds.height - frameBox.rect.maxY - 2)
+                menu.popUp(positioning: nil, at: NSPoint(x: frameBox.rect.minX, y: y), in: contentView)
+            } else {
+                menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
+            }
+        }
     }
 }
 
@@ -256,9 +594,9 @@ struct PilotRecessedBox<Content: View>: View {
             .padding(padding)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
-                Color.primary.opacity(colorScheme == .dark ? 0.05 : 0.035)
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color.primary.opacity(colorScheme == .dark ? 0.05 : 0.035))
             )
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .strokeBorder(Color.primary.opacity(colorScheme == .dark ? 0.09 : 0.06), lineWidth: 1)
@@ -291,12 +629,11 @@ struct PilotStatusPill: View {
         .foregroundStyle(color)
         .padding(.horizontal, 9)
         .padding(.vertical, 4)
-        .background(color.opacity(0.12))
+        .background(Capsule().fill(color.opacity(0.12)))
         .overlay(
             Capsule()
                 .strokeBorder(color.opacity(0.24), lineWidth: 1)
         )
-        .clipShape(Capsule())
     }
 }
 
@@ -477,12 +814,14 @@ struct PilotHealthChainView: View {
         .padding(.horizontal, 7)
         .padding(.vertical, 4.5)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(color.opacity(passed == nil ? 0.06 : 0.09))
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(color.opacity(passed == nil ? 0.06 : 0.09))
+        )
         .overlay(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .strokeBorder(color.opacity(passed == nil ? 0.14 : 0.22), lineWidth: 1)
         )
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 }
 

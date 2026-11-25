@@ -49,17 +49,13 @@ struct ProxyConfigView: View {
 
                 heroLaunchCard
 
-                HStack(alignment: .top, spacing: 12) {
+                EqualHeightTwoColumnLayout(spacing: 12, trailingWidth: 230) {
                     proxySettingsCard
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .disabled(appModel.isWorking)
 
                     iconStyleCard
-                        .frame(width: 230)
-                        .frame(maxHeight: .infinity)
                         .disabled(appModel.isWorking)
                 }
-                .fixedSize(horizontal: false, vertical: true)
 
                 quickActionsStrip
 
@@ -105,8 +101,6 @@ struct ProxyConfigView: View {
                         shadowYOffset: 2,
                         shadowAlpha: 0.14
                     ))
-                    .resizable()
-                    .interpolation(.high)
                     .frame(width: 44 + PilotIconCache.margin * 2, height: 44 + PilotIconCache.margin * 2)
                     .padding(-PilotIconCache.margin)
 
@@ -212,15 +206,11 @@ struct ProxyConfigView: View {
 
                 VStack(spacing: 6) {
                     configFieldRow(L10n.t("代理 Host", "Proxy Host", lang)) {
-                        TextField("127.0.0.1", text: $appModel.config.host)
-                            .textFieldStyle(.roundedBorder)
-                            .font(.system(.callout, design: .monospaced))
+                        PilotTextField(placeholder: "127.0.0.1", text: $appModel.config.host)
                     }
 
                     configFieldRow(L10n.t("SOCKS5 端口", "SOCKS5 Port", lang)) {
-                        TextField("7890", value: $appModel.config.hookPort, format: .number.grouping(.never))
-                            .textFieldStyle(.roundedBorder)
-                            .font(.system(.callout, design: .monospaced))
+                        PilotPortTextField(placeholder: "7890", value: $appModel.config.hookPort)
                     }
 
                     configFieldRow(L10n.t("ENV 协议", "ENV Scheme", lang)) {
@@ -231,18 +221,16 @@ struct ProxyConfigView: View {
                     }
 
                     configFieldRow(L10n.t("ENV 端口", "ENV Port", lang)) {
-                        TextField("7890", value: $appModel.config.envPort, format: .number.grouping(.never))
-                            .textFieldStyle(.roundedBorder)
-                            .font(.system(.callout, design: .monospaced))
+                        PilotPortTextField(placeholder: "7890", value: $appModel.config.envPort)
                     }
                 }
 
                 Divider()
 
                 configFieldRow(L10n.t("常用预设", "Presets", lang)) {
-                    PresetPopUpButton(
+                    PilotPresetMenuButton(
                         options: portPresets.map {
-                            PresetPopUpButton.Option(id: $0.id, shortTitle: $0.shortTitle, fullTitle: $0.title)
+                            PilotPresetMenuButton.Option(id: $0.id, shortTitle: $0.shortTitle, fullTitle: $0.title)
                         },
                         selectedId: selectedPresetId,
                         customTitle: L10n.t("自定义", "Custom", lang)
@@ -253,7 +241,6 @@ struct ProxyConfigView: View {
                             appModel.config.envPort = preset.envPort
                         }
                     }
-                    .fixedSize(horizontal: false, vertical: true)
                 }
             }
         }
@@ -338,8 +325,6 @@ struct ProxyConfigView: View {
                         shadowYOffset: 1,
                         shadowAlpha: 0.12
                     ))
-                    .resizable()
-                    .interpolation(.high)
                     .frame(width: 42 + PilotIconCache.margin * 2, height: 42 + PilotIconCache.margin * 2)
                     .padding(-PilotIconCache.margin)
                     .padding(4)
@@ -599,128 +584,5 @@ struct ProxyConfigView: View {
         return appModel.canHotUpdate
             ? L10n.t("保存并极速启动", "Save & Quick Launch", lang)
             : L10n.t("重建副本并启动", "Build & Launch", lang)
-    }
-}
-
-private struct PresetPopUpButton: NSViewRepresentable {
-    struct Option: Equatable {
-        let id: String
-        let shortTitle: String
-        let fullTitle: String
-    }
-
-    let options: [Option]
-    let selectedId: String
-    let customTitle: String
-    let onSelect: (String) -> Void
-
-    @Environment(\.isEnabled) private var isEnabled
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(options: options, customTitle: customTitle, onSelect: onSelect)
-    }
-
-    func makeNSView(context: Context) -> NSPopUpButton {
-        let button = NSPopUpButton(frame: .zero, pullsDown: false)
-        button.controlSize = .regular
-        button.font = NSFont.systemFont(ofSize: NSFont.systemFontSize)
-        button.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        button.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        button.target = context.coordinator
-        button.action = #selector(Coordinator.selectionChanged(_:))
-        button.menu?.delegate = context.coordinator
-        context.coordinator.syncMenu(on: button, options: options, selectedId: selectedId, customTitle: customTitle)
-        button.isEnabled = isEnabled
-        return button
-    }
-
-    func updateNSView(_ nsView: NSPopUpButton, context: Context) {
-        context.coordinator.onSelect = onSelect
-        nsView.isEnabled = isEnabled
-        if !context.coordinator.isMenuOpen {
-            context.coordinator.syncMenu(on: nsView, options: options, selectedId: selectedId, customTitle: customTitle)
-        }
-    }
-
-    final class Coordinator: NSObject, NSMenuDelegate {
-        var options: [Option]
-        var customTitle: String
-        var onSelect: (String) -> Void
-        var isMenuOpen = false
-        private var lastSignature = ""
-        private var lastSelectedId = ""
-
-        init(options: [Option], customTitle: String, onSelect: @escaping (String) -> Void) {
-            self.options = options
-            self.customTitle = customTitle
-            self.onSelect = onSelect
-        }
-
-        func syncMenu(on button: NSPopUpButton, options: [Option], selectedId: String, customTitle: String) {
-            self.options = options
-            self.customTitle = customTitle
-
-            let isCustom = selectedId == "custom"
-            let signature = options.map { "\($0.id)|\($0.shortTitle)|\($0.fullTitle)" }.joined(separator: ";")
-                + "#custom=\(isCustom ? customTitle : "")"
-
-            if signature == lastSignature, selectedId == lastSelectedId, button.numberOfItems > 0 {
-                return
-            }
-            lastSelectedId = selectedId
-
-            if signature != lastSignature || button.numberOfItems == 0 {
-                lastSignature = signature
-                button.removeAllItems()
-                for opt in options {
-                    let item = NSMenuItem(title: opt.shortTitle, action: nil, keyEquivalent: "")
-                    item.representedObject = opt.id
-                    button.menu?.addItem(item)
-                }
-                if isCustom {
-                    button.menu?.addItem(.separator())
-                    let customItem = NSMenuItem(title: customTitle, action: nil, keyEquivalent: "")
-                    customItem.representedObject = "custom"
-                    button.menu?.addItem(customItem)
-                }
-                button.menu?.delegate = self
-            }
-
-            if let idx = button.itemArray.firstIndex(where: { ($0.representedObject as? String) == selectedId }) {
-                button.selectItem(at: idx)
-            }
-            button.toolTip = options.first(where: { $0.id == selectedId })?.fullTitle ?? customTitle
-        }
-
-        func menuWillOpen(_ menu: NSMenu) {
-            isMenuOpen = true
-            for item in menu.items where !item.isSeparatorItem {
-                guard let id = item.representedObject as? String else { continue }
-                if let opt = options.first(where: { $0.id == id }) {
-                    item.title = opt.fullTitle
-                } else if id == "custom" {
-                    item.title = customTitle
-                }
-            }
-        }
-
-        func menuDidClose(_ menu: NSMenu) {
-            isMenuOpen = false
-            for item in menu.items where !item.isSeparatorItem {
-                guard let id = item.representedObject as? String else { continue }
-                if let opt = options.first(where: { $0.id == id }) {
-                    item.title = opt.shortTitle
-                } else if id == "custom" {
-                    item.title = customTitle
-                }
-            }
-        }
-
-        @objc func selectionChanged(_ sender: NSPopUpButton) {
-            guard let id = sender.selectedItem?.representedObject as? String, id != "custom" else {
-                return
-            }
-            onSelect(id)
-        }
     }
 }
