@@ -30,6 +30,7 @@ private struct BreakdownChartEntry: Identifiable {
 struct UsageHeatmapView: View {
     @Environment(\.appLanguage) private var lang
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.chartPalette) private var chartPalettePreset
     @ObservedObject var monitorStore: MonitorStore
 
     @State private var selectedPeriod: UsagePeriod = .days30
@@ -38,7 +39,7 @@ struct UsageHeatmapView: View {
     @State private var chartHoverDateKey: String?
 
     private var chartPalette: [Color] {
-        PilotMorandiPalette.chartSeries(colorScheme: colorScheme)
+        PilotMorandiPalette.chartSeries(preset: chartPalettePreset, colorScheme: colorScheme)
     }
 
     var body: some View {
@@ -257,7 +258,7 @@ struct UsageHeatmapView: View {
                         lang
                     ),
                     icon: "sparkles",
-                    tint: PilotMorandiPalette.kpiTokens(colorScheme: colorScheme),
+                    tint: PilotMorandiPalette.kpiTokens(preset: chartPalettePreset, colorScheme: colorScheme),
                     compact: true
                 )
                 PilotMetricTile(
@@ -265,7 +266,7 @@ struct UsageHeatmapView: View {
                     value: "\(cacheRate)%",
                     subtitle: cacheSubtitle,
                     icon: "bolt.fill",
-                    tint: PilotMorandiPalette.kpiCache(colorScheme: colorScheme),
+                    tint: PilotMorandiPalette.kpiCache(preset: chartPalettePreset, colorScheme: colorScheme),
                     compact: true
                 )
                 PilotMetricTile(
@@ -279,7 +280,7 @@ struct UsageHeatmapView: View {
                         lang
                     ),
                     icon: "arrow.triangle.2.circlepath",
-                    tint: PilotMorandiPalette.kpiCalls(colorScheme: colorScheme),
+                    tint: PilotMorandiPalette.kpiCalls(preset: chartPalettePreset, colorScheme: colorScheme),
                     compact: true
                 )
                 PilotMetricTile(
@@ -287,7 +288,7 @@ struct UsageHeatmapView: View {
                     value: TokenFormatting.usd(total.estimatedCostUSD),
                     subtitle: costSubtitle,
                     icon: "dollarsign.circle.fill",
-                    tint: PilotMorandiPalette.kpiCost(colorScheme: colorScheme),
+                    tint: PilotMorandiPalette.kpiCost(preset: chartPalettePreset, colorScheme: colorScheme),
                     compact: true
                 )
             }
@@ -405,7 +406,7 @@ struct UsageHeatmapView: View {
     }
 
     private func heatmapColor(level: Int) -> Color {
-        PilotMorandiPalette.heatmapColor(level: level, colorScheme: colorScheme)
+        PilotMorandiPalette.heatmapColor(level: level, preset: chartPalettePreset, colorScheme: colorScheme)
     }
 
     private var dailyChartCard: some View {
@@ -469,6 +470,7 @@ struct UsageHeatmapView: View {
             )
             .foregroundStyle(
                 PilotMorandiPalette.trendBarGradient(
+                    preset: chartPalettePreset,
                     colorScheme: colorScheme,
                     isHighlighted: chartHoverDateKey == day.dateKey
                 )

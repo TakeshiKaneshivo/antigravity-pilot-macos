@@ -61,7 +61,7 @@ final class PilotMCPService: MCPServiceHandling, @unchecked Sendable {
             let (config, configExists) = loadProxyConfig()
             let lang = config.appLanguage
             async let liveTask = buildLiveSnapshot(config: config, configExists: configExists, cascadeId: cascadeId, includeInternetCheck: true)
-            async let usageTask = buildUsageHistoryAsync()
+            async let usageTask = buildUsageHistoryAsync(chartPalette: config.chartPalette)
             let (live, usage) = await (liveTask, usageTask)
             let summary = formatMonitorSummary(live: live, usage: usage, lang: lang)
             return MCPToolResult(
@@ -78,7 +78,7 @@ final class PilotMCPService: MCPServiceHandling, @unchecked Sendable {
             let (config, configExists) = loadProxyConfig()
             let lang = config.appLanguage
             async let liveTask = buildLiveSnapshot(config: config, configExists: configExists, cascadeId: nil, includeInternetCheck: true)
-            async let usageTask = buildUsageHistoryAsync()
+            async let usageTask = buildUsageHistoryAsync(chartPalette: config.chartPalette)
             let (live, usage) = await (liveTask, usageTask)
             let summary = formatUsageSummary(usage: usage, period: period, lang: lang)
             return MCPToolResult(
@@ -110,7 +110,8 @@ final class PilotMCPService: MCPServiceHandling, @unchecked Sendable {
             )
 
         case "pilot_get_usage_history":
-            let usage = await buildUsageHistoryAsync()
+            let (config, _) = loadProxyConfig()
+            let usage = await buildUsageHistoryAsync(chartPalette: config.chartPalette)
             return MCPToolResult(text: "ok", structuredContent: usage)
 
         default:
@@ -138,12 +139,16 @@ final class PilotMCPService: MCPServiceHandling, @unchecked Sendable {
     ) async -> [String: Any] {
         let lang = config.appLanguage
         async let healthTask = ProxyHealthService.probe(config: config, includeInternetCheck: includeInternetCheck)
-        async let hubTask = Task.detached(priority: .utility) {
-            LanguageServerClient.discoverLiveHub()
-        }.value
+        async let resolvedHubTask: (hub: DaemonHubInfo, prefetchedSessions: [SessionSummary]?)? = {
+            let hubs = await Task.detached(priority: .utility) {
+                LanguageServerClient.discoverLiveHubs()
+            }.value
+            return await rpcClient.resolveMostActiveHub(candidates: hubs, preferredCascadeId: preferredId)
+        }()
 
         let report = await healthTask
-        let hub = await hubTask
+        let resolvedHub = await resolvedHubTask
+        let hub = resolvedHub?.hub
 
         let isoFormatter = Self.makeISOFormatter()
         var out: [String: Any] = [
@@ -169,10 +174,14 @@ final class PilotMCPService: MCPServiceHandling, @unchecked Sendable {
 
         do {
             async let statusTask = rpcClient.fetchUserStatus(hub: hub, lang: lang)
-            async let sessionsTask = rpcClient.fetchSessions(hub: hub)
+            let sessionList: [SessionSummary]
+            if let prefetched = resolvedHub?.prefetchedSessions {
+                sessionList = prefetched
+            } else {
+                sessionList = try await rpcClient.fetchSessions(hub: hub)
+            }
 
             let (profile, pools, labels, modelCatalog) = try await statusTask
-            let sessionList = try await sessionsTask
 
             if let profile {
                 out["userProfile"] = [
@@ -323,7 +332,7 @@ final class PilotMCPService: MCPServiceHandling, @unchecked Sendable {
         ]
     }
 
-    private func buildUsageHistoryAsync() async -> [String: Any] {
+    private func buildUsageHistoryAsync(chartPalette: ChartPalettePreset) async -> [String: Any] {
         await Task.detached(priority: .utility) { [support] in
             let snapshot = TranscriptScanner.scanMultiSource(
                 cacheURL: support.usageCacheURL,
@@ -332,7 +341,7 @@ final class PilotMCPService: MCPServiceHandling, @unchecked Sendable {
                 liveSessions: []
             )
             let storedTier = StoredSubscriptionTier.load(from: support.lastKnownTierURL)
-            return Self.encodeUsageHistory(snapshot, storedTier: storedTier)
+            return Self.encodeUsageHistory(snapshot, storedTier: storedTier, chartPalette: chartPalette)
         }.value
     }
 
@@ -349,7 +358,8 @@ final class PilotMCPService: MCPServiceHandling, @unchecked Sendable {
             "useOriginalIcon": config.useOriginalIcon,
             "runtimeIconStyle": config.runtimeIconStyle.rawValue,
             "appLanguage": config.appLanguage.rawValue,
-            "resolvedLanguage": config.appLanguage.resolved.rawValue
+            "resolvedLanguage": config.appLanguage.resolved.rawValue,
+            "chartPalette": config.chartPalette.rawValue
         ]
     }
 
@@ -375,7 +385,11 @@ final class PilotMCPService: MCPServiceHandling, @unchecked Sendable {
         ]
     }
 
-    private static func encodeUsageHistory(_ snapshot: UsageHistorySnapshot, storedTier: StoredSubscriptionTier?) -> [String: Any] {
+    private static func encodeUsageHistory(
+        _ snapshot: UsageHistorySnapshot,
+        storedTier: StoredSubscriptionTier?,
+        chartPalette: ChartPalettePreset
+    ) -> [String: Any] {
         let recent14 = Array(snapshot.dailyBuckets.suffix(14)).map(encodeDailyBucket)
         let heatmapWeeks = buildHeatmapMatrix(buckets: snapshot.dailyBuckets, weeksCount: 52)
 
@@ -455,7 +469,8 @@ final class PilotMCPService: MCPServiceHandling, @unchecked Sendable {
             "scannedFilesCount": snapshot.scannedFilesCount,
             "desktopArchiveCount": snapshot.desktopArchiveCount,
             "cliArchiveCount": snapshot.cliArchiveCount,
-            "scannedAtISO": makeISOFormatter().string(from: snapshot.scannedAt)
+            "scannedAtISO": makeISOFormatter().string(from: snapshot.scannedAt),
+            "chartPalette": chartPalette.rawValue
         ]
     }
 

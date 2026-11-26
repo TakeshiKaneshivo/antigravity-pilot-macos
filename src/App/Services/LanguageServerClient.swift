@@ -39,7 +39,16 @@ final class LanguageServerClient {
         session.finishTasksAndInvalidate()
     }
 
+    struct HubCandidateActivity {
+        let hub: DaemonHubInfo
+        let sessions: [SessionSummary]
+    }
+
     static func discoverLiveHub(daemonDir: URL? = nil) -> DaemonHubInfo? {
+        discoverLiveHubs(daemonDir: daemonDir).first
+    }
+
+    static func discoverLiveHubs(daemonDir: URL? = nil) -> [DaemonHubInfo] {
         let env = ProcessInfo.processInfo.environment
         let envAddress = (env["ANTIGRAVITY_LS_ADDRESS"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let envToken = (env["ANTIGRAVITY_CSRF_TOKEN"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -72,23 +81,103 @@ final class LanguageServerClient {
             }
         }
 
+        var ordered: [DaemonHubInfo] = []
         if !envToken.isEmpty {
             if let matched = liveHubs.first(where: { $0.csrfToken == envToken }) {
-                return matched
-            }
-            if let port = parseLoopbackPort(from: envAddress) {
+                ordered.append(matched)
+            } else if let port = parseLoopbackPort(from: envAddress) {
                 let isHttps = envAddress.lowercased().hasPrefix("https://")
-                return DaemonHubInfo(
+                ordered.append(DaemonHubInfo(
                     pid: getppid(),
                     httpsPort: isHttps ? port : nil,
                     httpPort: isHttps ? nil : port,
                     lsVersion: nil,
                     csrfToken: envToken
-                )
+                ))
+            }
+        }
+        ordered.append(contentsOf: liveHubs)
+
+        var seen = Set<String>()
+        return ordered.filter { hub in
+            let key = "\(hub.pid)|\(hub.csrfToken)"
+            return seen.insert(key).inserted
+        }
+    }
+
+    static func selectBestHubCandidate(
+        _ candidates: [HubCandidateActivity],
+        preferredCascadeId: String? = nil
+    ) -> HubCandidateActivity? {
+        guard let first = candidates.first else { return nil }
+        let preferred = (preferredCascadeId?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false)
+            ? preferredCascadeId?.trimmingCharacters(in: .whitespacesAndNewlines)
+            : nil
+
+        func metrics(for candidate: HubCandidateActivity) -> (hasPreferred: Bool, runningCount: Int, latestDate: Date, hasSessions: Bool) {
+            let hasPref = preferred.map { pid in candidate.sessions.contains(where: { $0.id == pid }) } ?? false
+            let running = candidate.sessions.filter(\.isRunning).count
+            let latest = candidate.sessions.compactMap(\.lastModifiedTime).max() ?? .distantPast
+            return (hasPref, running, latest, !candidate.sessions.isEmpty)
+        }
+
+        var best = first
+        var bestM = metrics(for: first)
+        for candidate in candidates.dropFirst() {
+            let m = metrics(for: candidate)
+            if m.hasPreferred != bestM.hasPreferred {
+                if m.hasPreferred { best = candidate; bestM = m }
+                continue
+            }
+            if m.runningCount != bestM.runningCount {
+                if m.runningCount > bestM.runningCount { best = candidate; bestM = m }
+                continue
+            }
+            if m.latestDate != bestM.latestDate {
+                if m.latestDate > bestM.latestDate { best = candidate; bestM = m }
+                continue
+            }
+            if m.hasSessions != bestM.hasSessions && m.hasSessions {
+                best = candidate
+                bestM = m
+            }
+        }
+        return best
+    }
+
+    func resolveMostActiveHub(
+        candidates: [DaemonHubInfo],
+        preferredCascadeId: String? = nil
+    ) async -> (hub: DaemonHubInfo, prefetchedSessions: [SessionSummary]?)? {
+        guard let first = candidates.first else { return nil }
+        if candidates.count == 1 {
+            return (first, nil)
+        }
+
+        var resultsByIndex: [Int: [SessionSummary]] = [:]
+        await withTaskGroup(of: (Int, [SessionSummary]?).self) { group in
+            for (idx, hub) in candidates.enumerated() {
+                group.addTask {
+                    let sessions = try? await self.fetchSessions(hub: hub)
+                    return (idx, sessions)
+                }
+            }
+            for await (idx, sessions) in group {
+                if let sessions {
+                    resultsByIndex[idx] = sessions
+                }
             }
         }
 
-        return liveHubs.first
+        let activities: [HubCandidateActivity] = candidates.indices.compactMap { idx in
+            guard let sessions = resultsByIndex[idx] else { return nil }
+            return HubCandidateActivity(hub: candidates[idx], sessions: sessions)
+        }
+
+        if let best = Self.selectBestHubCandidate(activities, preferredCascadeId: preferredCascadeId) {
+            return (best.hub, best.sessions)
+        }
+        return (first, nil)
     }
 
     private static func parseLoopbackPort(from address: String) -> Int? {
@@ -315,7 +404,8 @@ final class LanguageServerClient {
 
             let matchingModels = matchQuotaModels(groupTitle: groupTitle, description: g.description, from: quotaItems)
             if !mainBuckets.isEmpty {
-                let sortedMain = sortBuckets(mainBuckets)
+                let reconciledMain = reconcileBucketsWithUserStatus(buckets: mainBuckets, models: matchingModels)
+                let sortedMain = sortBuckets(reconciledMain)
                 result.append(QuotaPoolGroup(
                     id: "official|\(idx)|\(groupTitle)",
                     title: groupTitle,
@@ -327,8 +417,9 @@ final class LanguageServerClient {
                 ))
             }
             if !argonBuckets.isEmpty {
-                let sorted = sortBuckets(argonBuckets)
                 let argonModels = quotaItems.filter { $0.label.lowercased().contains("argon") || $0.modelId.lowercased().contains("argon") }
+                let reconciledArgon = reconcileBucketsWithUserStatus(buckets: argonBuckets, models: argonModels)
+                let sorted = sortBuckets(reconciledArgon)
                 result.append(QuotaPoolGroup(
                     id: "official|\(idx)|argon",
                     title: "Gemini 4 Argon",
@@ -340,8 +431,9 @@ final class LanguageServerClient {
                 ))
             }
             if !carbonBuckets.isEmpty {
-                let sorted = sortBuckets(carbonBuckets)
                 let carbonModels = quotaItems.filter { $0.label.lowercased().contains("carbon") || $0.modelId.lowercased().contains("carbon") }
+                let reconciledCarbon = reconcileBucketsWithUserStatus(buckets: carbonBuckets, models: carbonModels)
+                let sorted = sortBuckets(reconciledCarbon)
                 result.append(QuotaPoolGroup(
                     id: "official|\(idx)|carbon",
                     title: "Gemini 4 Carbon",
@@ -354,6 +446,39 @@ final class LanguageServerClient {
             }
         }
         return result
+    }
+
+    static func reconcileBucketsWithUserStatus(
+        buckets: [QuotaWindowBucket],
+        models: [ModelQuotaItem],
+        resetTimeToleranceSeconds: TimeInterval = 120
+    ) -> [QuotaWindowBucket] {
+        guard !models.isEmpty else { return buckets }
+        return buckets.map { bucket in
+            guard let bucketReset = bucket.resetTime else { return bucket }
+            let matchedFractions: [Double] = models.compactMap { item in
+                guard let frac = item.remainingFraction,
+                      frac.isFinite,
+                      let modelReset = item.resetTime,
+                      abs(modelReset.timeIntervalSince(bucketReset)) <= resetTimeToleranceSeconds else {
+                    return nil
+                }
+                return min(1.0, max(0.0, frac))
+            }
+            guard let minModelFrac = matchedFractions.min(),
+                  minModelFrac < bucket.remainingFraction else {
+                return bucket
+            }
+            return QuotaWindowBucket(
+                id: bucket.id,
+                windowKind: bucket.windowKind,
+                displayName: bucket.displayName,
+                remainingFraction: minModelFrac,
+                resetTime: bucket.resetTime,
+                resetTimeISO: bucket.resetTimeISO,
+                description: bucket.description
+            )
+        }
     }
 
     private static func sortBuckets(_ buckets: [QuotaWindowBucket]) -> [QuotaWindowBucket] {

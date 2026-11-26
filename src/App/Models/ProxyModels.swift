@@ -7,6 +7,28 @@ enum RuntimeIconStyle: String, Codable, Equatable, CaseIterable, Sendable {
     case original
 }
 
+enum ChartPalettePreset: String, Codable, Equatable, CaseIterable, Identifiable, Sendable {
+    case morandiClassic = "morandi-classic"
+    case morandiWarm = "morandi-warm"
+    case morandiNordic = "morandi-nordic"
+    case systemVibrant = "system-vibrant"
+
+    var id: String { rawValue }
+
+    func displayName(in lang: AppLanguage) -> String {
+        switch self {
+        case .morandiClassic:
+            return L10n.t(zhHans: "经典莫兰迪", zhHant: "經典莫蘭迪", en: "Classic Morandi", ru: "Классический Моранди", lang)
+        case .morandiWarm:
+            return L10n.t(zhHans: "暖陶画廊", zhHant: "暖陶畫廊", en: "Warm Terracotta", ru: "Тёплая терракота", lang)
+        case .morandiNordic:
+            return L10n.t(zhHans: "北欧冷雾", zhHant: "北歐冷霧", en: "Nordic Mist", ru: "Северный туман", lang)
+        case .systemVibrant:
+            return L10n.t(zhHans: "经典原色", zhHant: "經典原色", en: "Classic Vibrant", ru: "Классический яркий", lang)
+        }
+    }
+}
+
 struct ProxyConfig: Codable, Equatable {
     static let defaultNoProxy = "localhost,127.0.0.1,::1,127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,*.local,<local>"
 
@@ -19,6 +41,7 @@ struct ProxyConfig: Codable, Equatable {
     var enableMenuBarMonitor: Bool
     var showMenuBarMetrics: Bool
     var appLanguage: AppLanguage
+    var chartPalette: ChartPalettePreset
     var autoCheckUpdates: Bool
     var skippedUpdateVersion: String?
     var skippedAntigravityVersion: String?
@@ -38,6 +61,7 @@ struct ProxyConfig: Codable, Equatable {
         enableMenuBarMonitor: true,
         showMenuBarMetrics: true,
         appLanguage: .system,
+        chartPalette: .morandiClassic,
         autoCheckUpdates: true,
         skippedUpdateVersion: nil,
         skippedAntigravityVersion: nil
@@ -53,6 +77,7 @@ struct ProxyConfig: Codable, Equatable {
         enableMenuBarMonitor: Bool = true,
         showMenuBarMetrics: Bool = true,
         appLanguage: AppLanguage = .system,
+        chartPalette: ChartPalettePreset = .morandiClassic,
         autoCheckUpdates: Bool = true,
         skippedUpdateVersion: String? = nil,
         skippedAntigravityVersion: String? = nil
@@ -66,6 +91,7 @@ struct ProxyConfig: Codable, Equatable {
         self.enableMenuBarMonitor = enableMenuBarMonitor
         self.showMenuBarMetrics = showMenuBarMetrics
         self.appLanguage = appLanguage
+        self.chartPalette = chartPalette
         self.autoCheckUpdates = autoCheckUpdates
         self.skippedUpdateVersion = skippedUpdateVersion
         self.skippedAntigravityVersion = skippedAntigravityVersion
@@ -82,6 +108,7 @@ struct ProxyConfig: Codable, Equatable {
         case enableMenuBarMonitor
         case showMenuBarMetrics
         case appLanguage
+        case chartPalette
         case autoCheckUpdates
         case skippedUpdateVersion
         case skippedAntigravityVersion
@@ -106,6 +133,7 @@ struct ProxyConfig: Codable, Equatable {
         enableMenuBarMonitor = try container.decodeIfPresent(Bool.self, forKey: .enableMenuBarMonitor) ?? true
         showMenuBarMetrics = try container.decodeIfPresent(Bool.self, forKey: .showMenuBarMetrics) ?? true
         appLanguage = try container.decodeIfPresent(AppLanguage.self, forKey: .appLanguage) ?? .system
+        chartPalette = (try? container.decodeIfPresent(ChartPalettePreset.self, forKey: .chartPalette)) ?? .morandiClassic
         autoCheckUpdates = try container.decodeIfPresent(Bool.self, forKey: .autoCheckUpdates) ?? true
         skippedUpdateVersion = try container.decodeIfPresent(String.self, forKey: .skippedUpdateVersion)
         skippedAntigravityVersion = try container.decodeIfPresent(String.self, forKey: .skippedAntigravityVersion)
@@ -123,6 +151,7 @@ struct ProxyConfig: Codable, Equatable {
         try container.encode(enableMenuBarMonitor, forKey: .enableMenuBarMonitor)
         try container.encode(showMenuBarMetrics, forKey: .showMenuBarMetrics)
         try container.encode(appLanguage, forKey: .appLanguage)
+        try container.encode(chartPalette, forKey: .chartPalette)
         try container.encode(autoCheckUpdates, forKey: .autoCheckUpdates)
         try container.encodeIfPresent(skippedUpdateVersion, forKey: .skippedUpdateVersion)
         try container.encodeIfPresent(skippedAntigravityVersion, forKey: .skippedAntigravityVersion)

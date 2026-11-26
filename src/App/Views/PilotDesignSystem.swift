@@ -5,10 +5,19 @@ private struct AppLanguageEnvironmentKey: EnvironmentKey {
     static let defaultValue: AppLanguage = .system
 }
 
+private struct ChartPaletteEnvironmentKey: EnvironmentKey {
+    static let defaultValue: ChartPalettePreset = .morandiClassic
+}
+
 extension EnvironmentValues {
     var appLanguage: AppLanguage {
         get { self[AppLanguageEnvironmentKey.self] }
         set { self[AppLanguageEnvironmentKey.self] = newValue }
+    }
+
+    var chartPalette: ChartPalettePreset {
+        get { self[ChartPaletteEnvironmentKey.self] }
+        set { self[ChartPaletteEnvironmentKey.self] = newValue }
     }
 }
 
@@ -857,23 +866,86 @@ enum PilotMorandiPalette {
         )
     }
 
-    static func heatmapColor(level: Int, colorScheme: ColorScheme) -> Color {
-        let stops: [UInt32] = colorScheme == .dark
-            ? [0x282B2E, 0x2F3C34, 0x43594B, 0x5F7C6A, 0x84A38E]
-            : [0xECEEEB, 0xD6E0D6, 0xB1C4B3, 0x8BA690, 0x62806A]
+    static func heatmapColor(
+        level: Int,
+        preset: ChartPalettePreset = .morandiClassic,
+        colorScheme: ColorScheme
+    ) -> Color {
+        if preset == .systemVibrant {
+            switch level {
+            case 0: return Color.primary.opacity(0.07)
+            case 1: return Color.green.opacity(0.28)
+            case 2: return Color.green.opacity(0.50)
+            case 3: return Color.green.opacity(0.75)
+            default: return Color.green
+            }
+        }
+        let stops: [UInt32]
+        switch preset {
+        case .morandiClassic:
+            stops = colorScheme == .dark
+                ? [0x282B2E, 0x2F3C34, 0x43594B, 0x5F7C6A, 0x84A38E]
+                : [0xECEEEB, 0xD6E0D6, 0xB1C4B3, 0x8BA690, 0x62806A]
+        case .morandiWarm:
+            stops = colorScheme == .dark
+                ? [0x2B2928, 0x43362F, 0x634B3E, 0x8A6856, 0xB58C76]
+                : [0xEEEAE5, 0xE4D2C5, 0xD4B49D, 0xC09378, 0xA37258]
+        case .morandiNordic:
+            stops = colorScheme == .dark
+                ? [0x262A2F, 0x2B3844, 0x3C5266, 0x57758F, 0x7C9CB8]
+                : [0xEBEEF1, 0xCFDCE6, 0xA8BFD1, 0x809FB7, 0x5C7D96]
+        case .systemVibrant:
+            stops = []
+        }
         let idx = min(max(level, 0), stops.count - 1)
         return hex(stops[idx])
     }
 
-    static func trendBarGradient(colorScheme: ColorScheme, isHighlighted: Bool = false) -> LinearGradient {
+    static func trendBarGradient(
+        preset: ChartPalettePreset = .morandiClassic,
+        colorScheme: ColorScheme,
+        isHighlighted: Bool = false
+    ) -> LinearGradient {
+        if preset == .systemVibrant {
+            return LinearGradient(
+                colors: [
+                    Color.accentColor.opacity(isHighlighted ? 0.82 : 0.65),
+                    Color.accentColor
+                ],
+                startPoint: .bottom,
+                endPoint: .top
+            )
+        }
         let bottom: UInt32
         let top: UInt32
-        if colorScheme == .dark {
-            bottom = isHighlighted ? 0x617A91 : 0x4D6275
-            top = isHighlighted ? 0x9BB5CD : 0x85A1BA
-        } else {
-            bottom = isHighlighted ? 0x91A8BD : 0xA6B8C9
-            top = isHighlighted ? 0x5B768F : 0x6F8AA3
+        switch preset {
+        case .morandiClassic:
+            if colorScheme == .dark {
+                bottom = isHighlighted ? 0x617A91 : 0x4D6275
+                top = isHighlighted ? 0x9BB5CD : 0x85A1BA
+            } else {
+                bottom = isHighlighted ? 0x91A8BD : 0xA6B8C9
+                top = isHighlighted ? 0x5B768F : 0x6F8AA3
+            }
+        case .morandiWarm:
+            if colorScheme == .dark {
+                bottom = isHighlighted ? 0x726458 : 0x5E5248
+                top = isHighlighted ? 0xC2B09F : 0xAD9987
+            } else {
+                bottom = isHighlighted ? 0xB8A592 : 0xCABAA9
+                top = isHighlighted ? 0x887361 : 0x9D8876
+            }
+        case .morandiNordic:
+            if colorScheme == .dark {
+                bottom = isHighlighted ? 0x55716F : 0x445C5A
+                top = isHighlighted ? 0x9BBDBB : 0x84A8A6
+            } else {
+                bottom = isHighlighted ? 0x8EACA9 : 0xA5BEBC
+                top = isHighlighted ? 0x5A7C7A : 0x6E918F
+            }
+        case .systemVibrant:
+            bottom = 0
+            top = 0
         }
         return LinearGradient(
             colors: [hex(bottom), hex(top)],
@@ -882,22 +954,83 @@ enum PilotMorandiPalette {
         )
     }
 
-    static func chartSeries(colorScheme: ColorScheme) -> [Color] {
-        let values: [UInt32] = colorScheme == .dark
-            ? [0x8AA3BC, 0x9CB39E, 0xD4B096, 0xB5A2BA, 0xD1A1A6, 0x91B3B5]
-            : [0x748DA6, 0x8CA38E, 0xC9A286, 0xA38FA8, 0xC28F94, 0x7EA1A3]
-        return values.map(hex)
+    static func chartSeries(
+        preset: ChartPalettePreset = .morandiClassic,
+        colorScheme: ColorScheme
+    ) -> [Color] {
+        switch preset {
+        case .morandiClassic:
+            let values: [UInt32] = colorScheme == .dark
+                ? [0x8AA3BC, 0x9CB39E, 0xD4B096, 0xB5A2BA, 0xD1A1A6, 0x91B3B5]
+                : [0x748DA6, 0x8CA38E, 0xC9A286, 0xA38FA8, 0xC28F94, 0x7EA1A3]
+            return values.map(hex)
+        case .morandiWarm:
+            let values: [UInt32] = colorScheme == .dark
+                ? [0xD4AA92, 0x9EB3A1, 0x92A8BD, 0xCFA0A6, 0xD4C496, 0xB5A4BA]
+                : [0xC69B82, 0x8EA391, 0x7E93A8, 0xBF8F95, 0xC7B685, 0xA492A8]
+            return values.map(hex)
+        case .morandiNordic:
+            let values: [UInt32] = colorScheme == .dark
+                ? [0x85A1BA, 0x90B5B3, 0xB0A2BC, 0x9FB5A1, 0xC7BAAB, 0xCCA6AC]
+                : [0x6F8AA3, 0x7BA09E, 0x9D8FA8, 0x8EA390, 0xB5A899, 0xBA949A]
+            return values.map(hex)
+        case .systemVibrant:
+            return [.blue, .green, .orange, .purple, .pink, .teal]
+        }
     }
 
-    static func kpiTokens(colorScheme: ColorScheme) -> Color { chartSeries(colorScheme: colorScheme)[0] }
-    static func kpiCache(colorScheme: ColorScheme) -> Color { chartSeries(colorScheme: colorScheme)[5] }
-    static func kpiCalls(colorScheme: ColorScheme) -> Color { chartSeries(colorScheme: colorScheme)[3] }
-    static func kpiCost(colorScheme: ColorScheme) -> Color { chartSeries(colorScheme: colorScheme)[1] }
+    static func kpiTokens(preset: ChartPalettePreset = .morandiClassic, colorScheme: ColorScheme) -> Color {
+        preset == .systemVibrant ? .blue : chartSeries(preset: preset, colorScheme: colorScheme)[0]
+    }
 
-    static func contextBreakdownColors(colorScheme: ColorScheme) -> [Color] {
-        let values: [UInt32] = colorScheme == .dark
-            ? [0x8AA3BC, 0x9CB39E, 0xD4B096, 0xB5A2BA, 0xD1A1A6, 0x91B3B5, 0xC9B88C, 0x9CA6B8, 0xB59B92, 0x8F9BA0]
-            : [0x748DA6, 0x8CA38E, 0xC9A286, 0xA38FA8, 0xC28F94, 0x7EA1A3, 0xB5A375, 0x848FA3, 0xA1867D, 0x7A868B]
-        return values.map(hex)
+    static func kpiCache(preset: ChartPalettePreset = .morandiClassic, colorScheme: ColorScheme) -> Color {
+        preset == .systemVibrant ? .teal : chartSeries(preset: preset, colorScheme: colorScheme)[5]
+    }
+
+    static func kpiCalls(preset: ChartPalettePreset = .morandiClassic, colorScheme: ColorScheme) -> Color {
+        preset == .systemVibrant ? .indigo : chartSeries(preset: preset, colorScheme: colorScheme)[3]
+    }
+
+    static func kpiCost(preset: ChartPalettePreset = .morandiClassic, colorScheme: ColorScheme) -> Color {
+        preset == .systemVibrant ? .green : chartSeries(preset: preset, colorScheme: colorScheme)[1]
+    }
+
+    static func contextBreakdownColors(
+        preset: ChartPalettePreset = .morandiClassic,
+        colorScheme: ColorScheme
+    ) -> [Color] {
+        switch preset {
+        case .morandiClassic:
+            let values: [UInt32] = colorScheme == .dark
+                ? [0x8AA3BC, 0x9CB39E, 0xD4B096, 0xB5A2BA, 0xD1A1A6, 0x91B3B5, 0xC9B88C, 0x9CA6B8, 0xB59B92, 0x8F9BA0]
+                : [0x748DA6, 0x8CA38E, 0xC9A286, 0xA38FA8, 0xC28F94, 0x7EA1A3, 0xB5A375, 0x848FA3, 0xA1867D, 0x7A868B]
+            return values.map(hex)
+        case .morandiWarm:
+            let values: [UInt32] = colorScheme == .dark
+                ? [0xD4AA92, 0x9EB3A1, 0x92A8BD, 0xCFA0A6, 0xD4C496, 0xB5A4BA, 0xC7B09B, 0x9CB4B3, 0xCB9F8D, 0xAEA7A1]
+                : [0xC69B82, 0x8EA391, 0x7E93A8, 0xBF8F95, 0xC7B685, 0xA492A8, 0xB39B86, 0x89A1A0, 0xB88C7A, 0x9A938D]
+            return values.map(hex)
+        case .morandiNordic:
+            let values: [UInt32] = colorScheme == .dark
+                ? [0x85A1BA, 0x90B5B3, 0xB0A2BC, 0x9FB5A1, 0xC7BAAB, 0xCCA6AC, 0x93ACC0, 0xA2B2BD, 0xB2BCB2, 0x9FA4AE]
+                : [0x6F8AA3, 0x7BA09E, 0x9D8FA8, 0x8EA390, 0xB5A899, 0xBA949A, 0x7C95A8, 0x8D9DA8, 0x9EA89E, 0x8A8F99]
+            return values.map(hex)
+        case .systemVibrant:
+            return [.blue, .green, .orange, .purple, .pink, .teal, .yellow, .indigo, .red, .gray]
+        }
+    }
+
+    static func previewSwatches(preset: ChartPalettePreset, colorScheme: ColorScheme) -> [Color] {
+        if preset == .systemVibrant {
+            return [.green, .blue, .orange, .purple, .teal]
+        }
+        let series = chartSeries(preset: preset, colorScheme: colorScheme)
+        return [
+            heatmapColor(level: 3, preset: preset, colorScheme: colorScheme),
+            series[0],
+            series[1],
+            series[2],
+            series[3]
+        ]
     }
 }

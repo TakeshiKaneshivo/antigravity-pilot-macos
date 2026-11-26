@@ -21,6 +21,9 @@ final class MonitorStore: ObservableObject {
     private let support: AppSupport
     private let rpcClient = LanguageServerClient()
     nonisolated(unsafe) private var liveTimer: Timer?
+    private var currentPollingInterval: TimeInterval = 0
+    private var liveRefreshTask: Task<Void, Never>?
+    private var postTurnRefreshTask: Task<Void, Never>?
     private var lastHistoryScanAt: Date = .distantPast
     private var isInteractiveVisible = true
     private var liveRefreshGeneration = 0
@@ -33,6 +36,21 @@ final class MonitorStore: ObservableObject {
 
     deinit {
         liveTimer?.invalidate()
+        liveRefreshTask?.cancel()
+        postTurnRefreshTask?.cancel()
+    }
+
+    nonisolated static func pollingInterval(
+        isInteractiveVisible: Bool,
+        activeRunningSessionCount: Int
+    ) -> TimeInterval {
+        if isInteractiveVisible {
+            return 5.0
+        }
+        if activeRunningSessionCount > 0 {
+            return 10.0
+        }
+        return 30.0
     }
 
     func start() {
@@ -58,8 +76,8 @@ final class MonitorStore: ObservableObject {
         refreshLive(force: true)
     }
 
-    func refreshAll(forceHistory: Bool = true) {
-        refreshLive()
+    func refreshAll(forceHistory: Bool = true, forceLive: Bool = false) {
+        refreshLive(force: forceLive)
         if forceHistory || Date().timeIntervalSince(lastHistoryScanAt) >= 60 {
             refreshHistory()
         }
@@ -67,6 +85,11 @@ final class MonitorStore: ObservableObject {
 
     func refreshLive(force: Bool = false) {
         guard force || !isRefreshingLive else { return }
+        if force {
+            liveRefreshTask?.cancel()
+            postTurnRefreshTask?.cancel()
+            postTurnRefreshTask = nil
+        }
         isRefreshingLive = true
         liveRefreshGeneration += 1
         let generation = liveRefreshGeneration
@@ -74,15 +97,24 @@ final class MonitorStore: ObservableObject {
         let currentLang = L10n.current
         let supportCopy = support
 
-        Task { [weak self] in
+        liveRefreshTask = Task { [weak self] in
             guard let self else { return }
-            let hub = await Task.detached(priority: .utility) {
-                LanguageServerClient.discoverLiveHub()
+            let hubs = await Task.detached(priority: .utility) {
+                LanguageServerClient.discoverLiveHubs()
             }.value
 
-            guard self.liveRefreshGeneration == generation else { return }
+            guard !Task.isCancelled, self.liveRefreshGeneration == generation else { return }
 
-            guard let hub else {
+            let resolved = await self.rpcClient.resolveMostActiveHub(
+                candidates: hubs,
+                preferredCascadeId: preferredId
+            )
+
+            guard !Task.isCancelled, self.liveRefreshGeneration == generation else { return }
+
+            guard let resolved else {
+                self.postTurnRefreshTask?.cancel()
+                self.postTurnRefreshTask = nil
                 self.liveHub = nil
                 self.userProfile = nil
                 self.selectedCascadeId = nil
@@ -92,15 +124,23 @@ final class MonitorStore: ObservableObject {
                 self.quotaPools = []
                 self.lastLiveError = nil
                 self.isRefreshingLive = false
+                self.rescheduleTimer()
                 return
             }
 
+            let hub = resolved.hub
             do {
                 async let statusTask = self.rpcClient.fetchUserStatus(hub: hub, lang: currentLang)
-                async let sessionsTask = self.rpcClient.fetchSessions(hub: hub)
+                let sessionList: [SessionSummary]
+                if let prefetched = resolved.prefetchedSessions {
+                    sessionList = prefetched
+                } else {
+                    sessionList = try await self.rpcClient.fetchSessions(hub: hub)
+                }
 
                 let (profile, pools, labels, catalog) = try await statusTask
-                let sessionList = try await sessionsTask
+
+                guard !Task.isCancelled, self.liveRefreshGeneration == generation else { return }
 
                 let targetSession = preferredId.flatMap { pid in sessionList.first(where: { $0.id == pid }) }
                     ?? sessionList.first
@@ -125,7 +165,10 @@ final class MonitorStore: ObservableObject {
                     contextSnap = nil
                 }
 
-                guard self.liveRefreshGeneration == generation else { return }
+                guard !Task.isCancelled, self.liveRefreshGeneration == generation else { return }
+
+                let previousRunningCount = self.activeRunningSessionCount
+                let newRunningCount = sessionList.filter(\.isRunning).count
 
                 self.liveHub = hub
                 self.userProfile = profile
@@ -138,17 +181,31 @@ final class MonitorStore: ObservableObject {
                 self.modelCatalog = catalog
                 self.quotaPools = pools
                 self.sessions = sessionList
-                self.activeRunningSessionCount = sessionList.filter(\.isRunning).count
+                self.activeRunningSessionCount = newRunningCount
                 self.selectedCascadeId = targetSession?.id
                 self.activeContext = contextSnap
                 self.lastLiveError = nil
                 self.lastUpdatedAt = Date()
+                self.rescheduleTimer()
+
                 if !catalog.isEmpty && !self.didInitialModelCatalogSync {
                     self.didInitialModelCatalogSync = true
                     self.refreshHistory()
                 }
+
+                if newRunningCount > 0 {
+                    self.postTurnRefreshTask?.cancel()
+                    self.postTurnRefreshTask = nil
+                } else if previousRunningCount > 0 && newRunningCount == 0 {
+                    self.postTurnRefreshTask?.cancel()
+                    self.postTurnRefreshTask = Task { [weak self] in
+                        try? await Task.sleep(nanoseconds: 1_500_000_000)
+                        guard !Task.isCancelled, let self else { return }
+                        self.refreshLive(force: true)
+                    }
+                }
             } catch {
-                guard self.liveRefreshGeneration == generation else { return }
+                guard !Task.isCancelled, self.liveRefreshGeneration == generation else { return }
                 self.liveHub = hub
                 self.lastLiveError = error.localizedDescription
             }
@@ -226,9 +283,33 @@ final class MonitorStore: ObservableObject {
         return runningPrefix + parts.joined(separator: " · ")
     }
 
+    func lastUpdatedShortText(lang: AppLanguage, now: Date = Date()) -> String? {
+        guard let lastUpdatedAt else { return nil }
+        let diff = max(0, Int(now.timeIntervalSince(lastUpdatedAt)))
+        if diff < 5 {
+            return L10n.t(zhHans: "刚刚", zhHant: "剛剛", en: "just now", ru: "только что", lang)
+        }
+        if diff < 60 {
+            return L10n.t(zhHans: "\(diff)秒前", zhHant: "\(diff)秒前", en: "\(diff)s ago", ru: "\(diff)с назад", lang)
+        }
+        if diff < 3600 {
+            let mins = diff / 60
+            return L10n.t(zhHans: "\(mins)分钟前", zhHant: "\(mins)分鐘前", en: "\(mins)m ago", ru: "\(mins)м назад", lang)
+        }
+        let hrs = diff / 3600
+        return L10n.t(zhHans: "\(hrs)小时前", zhHant: "\(hrs)小時前", en: "\(hrs)h ago", ru: "\(hrs)ч назад", lang)
+    }
+
     private func rescheduleTimer() {
+        let interval = Self.pollingInterval(
+            isInteractiveVisible: isInteractiveVisible,
+            activeRunningSessionCount: activeRunningSessionCount
+        )
+        if liveTimer != nil && abs(currentPollingInterval - interval) < 0.01 {
+            return
+        }
         liveTimer?.invalidate()
-        let interval: TimeInterval = isInteractiveVisible ? 5.0 : 30.0
+        currentPollingInterval = interval
         liveTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self else { return }

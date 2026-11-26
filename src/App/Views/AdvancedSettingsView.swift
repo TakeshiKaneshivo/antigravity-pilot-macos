@@ -3,13 +3,17 @@ import SwiftUI
 
 struct AdvancedSettingsView: View {
     @Environment(\.appLanguage) private var lang
+    @Environment(\.colorScheme) private var colorScheme
     @ObservedObject var appModel: AppModel
     var onHideToMenuBar: () -> Void
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 8) {
                 languageCard
+                    .disabled(appModel.isWorking)
+
+                chartPaletteCard
                     .disabled(appModel.isWorking)
 
                 noProxyCard
@@ -28,10 +32,13 @@ struct AdvancedSettingsView: View {
                 }
             }
             .padding(.horizontal, 22)
-            .padding(.vertical, 12)
+            .padding(.vertical, 10)
         }
         .onChange(of: appModel.config.appLanguage) { _ in
             appModel.applyLanguageChange()
+        }
+        .onChange(of: appModel.config.chartPalette) { _ in
+            appModel.savePreferencesOnly()
         }
         .onChange(of: appModel.config.noProxy) { _ in
             appModel.scheduleSaveNoProxy()
@@ -45,8 +52,8 @@ struct AdvancedSettingsView: View {
     }
 
     private var languageCard: some View {
-        PilotCard(padding: 12) {
-            VStack(alignment: .leading, spacing: 6) {
+        PilotCard(padding: 10) {
+            VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 12) {
                     Label(L10n.t("界面语言", "Language", lang), systemImage: "globe")
                         .font(.subheadline.weight(.semibold))
@@ -78,9 +85,59 @@ struct AdvancedSettingsView: View {
         }
     }
 
+    private var chartPaletteCard: some View {
+        let swatches = PilotMorandiPalette.previewSwatches(preset: appModel.config.chartPalette, colorScheme: colorScheme)
+        return PilotCard(padding: 10) {
+            HStack(spacing: 10) {
+                Label(
+                    L10n.t(
+                        zhHans: "图表配色",
+                        zhHant: "圖表配色",
+                        en: "Chart Palette",
+                        ru: "Палитра графиков",
+                        lang
+                    ),
+                    systemImage: "paintpalette"
+                )
+                .font(.subheadline.weight(.semibold))
+
+                Spacer()
+
+                HStack(spacing: 4) {
+                    ForEach(Array(swatches.enumerated()), id: \.offset) { _, swatch in
+                        Circle()
+                            .fill(swatch)
+                            .frame(width: 8, height: 8)
+                            .overlay(
+                                Circle()
+                                    .strokeBorder(Color.primary.opacity(colorScheme == .dark ? 0.22 : 0.12), lineWidth: 0.5)
+                            )
+                    }
+                }
+                .padding(.trailing, 2)
+
+                Picker("", selection: $appModel.config.chartPalette) {
+                    ForEach(ChartPalettePreset.allCases) { option in
+                        Text(option.displayName(in: lang)).tag(option)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .frame(width: 185)
+            }
+            .help(L10n.t(
+                zhHans: "应用于热力图、趋势图、占比图、KPI 图标与上下文构成，并同步至应用内插件看板",
+                zhHant: "套用於熱力圖、趨勢圖、佔比圖、KPI 圖示與上下文構成，並同步至應用內外掛看板",
+                en: "Applies to heatmap, trend, breakdown charts, KPI icons & context breakdown, synced with the in-app plugin dashboard",
+                ru: "Применяется к графикам, KPI и составу контекста, синхронизируется с панелью плагина",
+                lang
+            ))
+        }
+    }
+
     private var noProxyCard: some View {
-        PilotCard(padding: 12) {
-            VStack(alignment: .leading, spacing: 8) {
+        PilotCard(padding: 10) {
+            VStack(alignment: .leading, spacing: 6) {
                 HStack {
                     Label(L10n.t("NO_PROXY 绕过规则", "NO_PROXY Bypass Rules", lang), systemImage: "arrow.triangle.branch")
                         .font(.subheadline.weight(.semibold))
@@ -97,20 +154,20 @@ struct AdvancedSettingsView: View {
                     "Supports LAN CIDRs (e.g. 192.168.0.0/16) and domain suffixes (e.g. *.local) across dylib hook, env vars, and Chromium.",
                     lang
                 ))
-                .font(.caption)
+                .font(.caption2)
                 .foregroundStyle(.secondary)
 
                 TextField("localhost,127.0.0.1,192.168.0.0/16,*.local", text: $appModel.config.noProxy, axis: .vertical)
                     .textFieldStyle(.roundedBorder)
-                    .lineLimit(2...4)
+                    .lineLimit(2...3)
                     .font(.system(.caption, design: .monospaced))
             }
         }
     }
 
     private var behaviorCard: some View {
-        PilotCard(padding: 12) {
-            VStack(alignment: .leading, spacing: 8) {
+        PilotCard(padding: 10) {
+            VStack(alignment: .leading, spacing: 6) {
                 Label(L10n.t("菜单栏与开机自启", "Menu Bar & Login Item", lang), systemImage: "menubar.rectangle")
                     .font(.subheadline.weight(.semibold))
 
@@ -162,13 +219,13 @@ struct AdvancedSettingsView: View {
     }
 
     private var maintenanceCard: some View {
-        PilotCard(padding: 12) {
-            VStack(alignment: .leading, spacing: 8) {
+        PilotCard(padding: 10) {
+            VStack(alignment: .leading, spacing: 6) {
                 Label(L10n.t("通道摘要与副本维护", "Channel Summary & Maintenance", lang), systemImage: "wrench.and.screwdriver")
                     .font(.subheadline.weight(.semibold))
 
-                PilotRecessedBox(padding: 9) {
-                    VStack(alignment: .leading, spacing: 4) {
+                PilotRecessedBox(padding: 7) {
+                    VStack(alignment: .leading, spacing: 2.5) {
                         Text("dylib Hook: \(appModel.config.hookProxyURL)")
                             .font(.system(.caption, design: .monospaced))
                         Text("Env / Chromium: \(appModel.config.envProxyURL)")

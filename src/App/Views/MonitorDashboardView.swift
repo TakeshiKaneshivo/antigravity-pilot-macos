@@ -3,6 +3,7 @@ import SwiftUI
 struct MonitorDashboardView: View {
     @Environment(\.appLanguage) private var lang
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.chartPalette) private var chartPalettePreset
     @ObservedObject var appModel: AppModel
     @ObservedObject var monitorStore: MonitorStore
 
@@ -98,7 +99,7 @@ struct MonitorDashboardView: View {
             }
 
             Button {
-                monitorStore.refreshLive()
+                monitorStore.refreshLive(force: true)
             } label: {
                 Image(systemName: "arrow.clockwise")
                     .font(.caption)
@@ -106,7 +107,6 @@ struct MonitorDashboardView: View {
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
-            .disabled(monitorStore.isRefreshingLive)
             .help(L10n.t("刷新实时监控", "Refresh live monitor", lang))
         }
     }
@@ -352,7 +352,7 @@ struct MonitorDashboardView: View {
     }
 
     private func contextBreakdownSection(_ items: [ContextBreakdownItem]) -> some View {
-        let palette = PilotMorandiPalette.contextBreakdownColors(colorScheme: colorScheme)
+        let palette = PilotMorandiPalette.contextBreakdownColors(preset: chartPalettePreset, colorScheme: colorScheme)
         let topSummary = items.prefix(3).map { item in
             "\(item.category.localizedTitle(lang)) \(Int((item.fraction * 100).rounded()))%"
         }.joined(separator: " · ")

@@ -21,6 +21,7 @@ interface ProxyConfigDTO {
   useOriginalIcon: boolean;
   appLanguage?: string;
   resolvedLanguage?: ResolvedLang;
+  chartPalette?: string;
 }
 
 interface ProxyHealthDTO {
@@ -226,6 +227,7 @@ interface UsageHistoryDTO {
   desktopArchiveCount?: number;
   cliArchiveCount?: number;
   scannedAtISO: string;
+  chartPalette?: string;
 }
 
 interface AppState {
@@ -245,6 +247,7 @@ interface AppState {
   didAutoScrollHeatmap: boolean;
   live: LiveSnapshotDTO | null;
   usage: UsageHistoryDTO | null;
+  chartPalette: string;
   isProbingProxy: boolean;
   isRefreshingLive: boolean;
   isRefreshingUsage: boolean;
@@ -294,6 +297,7 @@ const state: AppState = {
   didAutoScrollHeatmap: false,
   live: null,
   usage: null,
+  chartPalette: 'morandi-classic',
   isProbingProxy: false,
   isRefreshingLive: false,
   isRefreshingUsage: false,
@@ -373,6 +377,20 @@ const app = new App({ name: 'Antigravity Pilot', version: '0.1.0' }, {});
 
 type HostStyleVariables = Parameters<typeof applyHostStyleVariables>[0];
 
+const VALID_PALETTES = new Set([
+  'morandi-classic',
+  'morandi-warm',
+  'morandi-nordic',
+  'system-vibrant',
+]);
+
+function applyPalette(raw?: string) {
+  const next = raw && VALID_PALETTES.has(raw) ? raw : 'morandi-classic';
+  if (document.documentElement.getAttribute('data-palette') !== next) {
+    document.documentElement.setAttribute('data-palette', next);
+  }
+}
+
 function applyTheme(theme?: string, variables?: HostStyleVariables) {
   if (theme) {
     applyDocumentTheme(theme as 'light' | 'dark');
@@ -406,9 +424,15 @@ app.ontoolresult = (result) => {
   if (sc.live && typeof sc.live === 'object') {
     state.live = sc.live as LiveSnapshotDTO;
     state.displayedCascadeId = state.live.selectedCascadeId ?? null;
+    if (state.live.proxyConfig?.chartPalette) {
+      state.chartPalette = state.live.proxyConfig.chartPalette;
+    }
   }
   if (sc.usage && typeof sc.usage === 'object') {
     state.usage = sc.usage as UsageHistoryDTO;
+    if (state.usage.chartPalette) {
+      state.chartPalette = state.usage.chartPalette;
+    }
   }
   state.errorBanner = result?.isError
     ? tr('工具调用返回异常，请点击刷新重试。', 'Tool call returned an error. Click Refresh to retry.')
@@ -457,6 +481,9 @@ async function refreshLive(includeInternetCheck: boolean, force = false) {
   if (data) {
     state.live = data as unknown as LiveSnapshotDTO;
     state.displayedCascadeId = state.live.selectedCascadeId ?? null;
+    if (state.live.proxyConfig?.chartPalette) {
+      state.chartPalette = state.live.proxyConfig.chartPalette;
+    }
   }
   render();
 }
@@ -468,7 +495,12 @@ async function runProxyProbe() {
   const data = await callServerToolSafe('pilot_probe_proxy', {});
   state.isProbingProxy = false;
   if (data && state.live) {
-    if (data.proxyConfig) state.live.proxyConfig = data.proxyConfig as ProxyConfigDTO;
+    if (data.proxyConfig) {
+      state.live.proxyConfig = data.proxyConfig as ProxyConfigDTO;
+      if (state.live.proxyConfig.chartPalette) {
+        state.chartPalette = state.live.proxyConfig.chartPalette;
+      }
+    }
     if (data.proxyHealth) state.live.proxyHealth = data.proxyHealth as ProxyHealthDTO;
   }
   render();
@@ -482,6 +514,9 @@ async function refreshUsage() {
   state.isRefreshingUsage = false;
   if (data) {
     state.usage = data as unknown as UsageHistoryDTO;
+    if (state.usage.chartPalette) {
+      state.chartPalette = state.usage.chartPalette;
+    }
   }
   render();
 }
@@ -1440,6 +1475,7 @@ function render() {
   if (!root) return;
 
   document.documentElement.lang = currentLang();
+  applyPalette(state.chartPalette);
   const prevScroller = root.querySelector('.heatmap-scroll') as HTMLElement | null;
   const prevScrollLeft = prevScroller ? prevScroller.scrollLeft : null;
 

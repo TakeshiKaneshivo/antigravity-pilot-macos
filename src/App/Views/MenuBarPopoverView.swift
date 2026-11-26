@@ -75,23 +75,29 @@ struct MenuBarPopoverView: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text("Antigravity Pilot")
                     .font(.callout.weight(.semibold))
-                Text(
-                    monitorStore.liveHub != nil
-                        ? {
-                            let ver = (monitorStore.liveHub?.lsVersion ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-                            let suffix = ver.isEmpty ? "" : " v\(ver)"
-                            return L10n.t(
-                                zhHans: "已连接 LS\(suffix)",
-                                zhHant: "已連線 LS\(suffix)",
-                                en: "Connected LS\(suffix)",
-                                ru: "Подключён LS\(suffix)",
-                                lang
-                            )
-                        }()
-                        : L10n.t("等待 Antigravity 启动", "Waiting for Antigravity", lang)
-                )
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+                if monitorStore.liveHub != nil {
+                    TimelineView(.periodic(from: .now, by: 5)) { context in
+                        let ver = (monitorStore.liveHub?.lsVersion ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                        let verSuffix = ver.isEmpty ? "" : " v\(ver)"
+                        let base = L10n.t(
+                            zhHans: "已连接 LS\(verSuffix)",
+                            zhHant: "已連線 LS\(verSuffix)",
+                            en: "Connected LS\(verSuffix)",
+                            ru: "Подключён LS\(verSuffix)",
+                            lang
+                        )
+                        let updatedSuffix = monitorStore.lastUpdatedShortText(lang: lang, now: context.date)
+                            .map { " · \($0)" } ?? ""
+                        Text(base + updatedSuffix)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                } else {
+                    Text(L10n.t("等待 Antigravity 启动", "Waiting for Antigravity", lang))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
             }
             Spacer()
             if let updateVer = updateStore.availableVersionBadgeText(skippedVersion: appModel.config.skippedUpdateVersion) {
@@ -125,10 +131,11 @@ struct MenuBarPopoverView: View {
             }
             Button {
                 appModel.checkProxyHealth()
-                monitorStore.refreshAll(forceHistory: true)
+                monitorStore.refreshAll(forceHistory: true, forceLive: true)
             } label: {
                 Image(systemName: "arrow.clockwise")
                     .font(.caption)
+                    .applyPulseSymbolEffect(monitorStore.isRefreshingLive)
             }
             .buttonStyle(.bordered)
             .controlSize(.small)

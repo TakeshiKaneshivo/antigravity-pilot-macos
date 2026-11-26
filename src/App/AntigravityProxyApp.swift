@@ -383,7 +383,7 @@ final class StatusBarController: NSObject, NSPopoverDelegate, NSMenuDelegate {
 
     @objc private func menuRefreshAll() {
         appModel.checkProxyHealth()
-        monitorStore.refreshAll(forceHistory: true)
+        monitorStore.refreshAll(forceHistory: true, forceLive: true)
     }
 
     @objc private func menuCheckForUpdates() {
@@ -1573,6 +1573,132 @@ enum SmokeTestRunner {
             freeProfile.tierKind == .free && freeProfile.monthlyReferenceUSD == nil
                 && ultraProfile.tierKind == .ultra && abs((loadedTier?.monthlyReferenceUSD ?? 0) - 249.99) < 0.01,
             "SubscriptionTierKind distinguishes Free vs Pro vs Ultra and persists StoredSubscriptionTier"
+        )
+
+        // 29. Dual-source quota reconciliation (GetUserStatus fresher fraction vs RetrieveUserQuotaSummary)
+        let recNow = Date()
+        let rec5hReset = recNow.addingTimeInterval(3600 * 3)
+        let rec5hISO = ISO8601DateFormatter().string(from: rec5hReset)
+        let rec5hNearDate = rec5hReset.addingTimeInterval(45) // within +-120s tolerance
+        let rec5hNewWindowReset = recNow.addingTimeInterval(3600 * 5)
+        let rec5hNewWindowISO = ISO8601DateFormatter().string(from: rec5hNewWindowReset)
+        let recWeekReset = recNow.addingTimeInterval(3600 * 96)
+        let recWeekISO = ISO8601DateFormatter().string(from: recWeekReset)
+
+        let recSummarySameWindowJSON = """
+        {
+          "response": {
+            "groups": [
+              {
+                "displayName": "Gemini Models",
+                "buckets": [
+                  { "bucketId": "gemini-5h", "window": "5h", "remainingFraction": 0.07, "resetTime": "\(rec5hISO)" },
+                  { "bucketId": "gemini-weekly", "window": "weekly", "remainingFraction": 0.60, "resetTime": "\(recWeekISO)" }
+                ]
+              }
+            ]
+          }
+        }
+        """.data(using: .utf8)!
+        let recFresherModels = [
+            ModelQuotaItem(
+                id: "gemini-4-neon|Gemini 4 Neon",
+                label: "Gemini 4 Neon",
+                modelId: "gemini-4-neon",
+                remainingFraction: 0.04,
+                resetTime: rec5hNearDate,
+                resetTimeISO: nil,
+                tagTitle: nil
+            )
+        ]
+        let recPoolsLower = LanguageServerClient.parseOfficialQuotaPools(
+            data: recSummarySameWindowJSON,
+            quotaItems: recFresherModels,
+            lang: .en,
+            now: recNow
+        )
+        let recLower5h = recPoolsLower.first?.buckets.first(where: { $0.windowKind == .fiveHour })
+        let recLowerWk = recPoolsLower.first?.buckets.first(where: { $0.windowKind == .weekly })
+
+        let recSummaryNewWindowJSON = """
+        {
+          "response": {
+            "groups": [
+              {
+                "displayName": "Gemini Models",
+                "buckets": [
+                  { "bucketId": "gemini-5h", "window": "5h", "remainingFraction": 1.0, "resetTime": "\(rec5hNewWindowISO)" }
+                ]
+              }
+            ]
+          }
+        }
+        """.data(using: .utf8)!
+        let recPoolsReset = LanguageServerClient.parseOfficialQuotaPools(
+            data: recSummaryNewWindowJSON,
+            quotaItems: recFresherModels,
+            lang: .en,
+            now: recNow
+        )
+
+        let recHigherModels = [
+            ModelQuotaItem(
+                id: "gemini-4-neon|Gemini 4 Neon",
+                label: "Gemini 4 Neon",
+                modelId: "gemini-4-neon",
+                remainingFraction: 0.12,
+                resetTime: rec5hNearDate,
+                resetTimeISO: nil,
+                tagTitle: nil
+            )
+        ]
+        let recPoolsHigher = LanguageServerClient.parseOfficialQuotaPools(
+            data: recSummarySameWindowJSON,
+            quotaItems: recHigherModels,
+            lang: .en,
+            now: recNow
+        )
+        let recHigher5h = recPoolsHigher.first?.buckets.first(where: { $0.windowKind == .fiveHour })
+
+        check(
+            recLower5h?.remainingPercent == 4
+                && recLowerWk?.remainingPercent == 60
+                && recPoolsReset.first?.remainingPercent == 100
+                && recHigher5h?.remainingPercent == 7,
+            "LanguageServerClient reconciles fresher lower GetUserStatus 5h quota without touching weekly or post-reset windows"
+        )
+
+        // 30. 3-tier adaptive polling intervals & multi-hub activity selection
+        let pollVisibleIdle = MonitorStore.pollingInterval(isInteractiveVisible: true, activeRunningSessionCount: 0)
+        let pollHiddenRunning = MonitorStore.pollingInterval(isInteractiveVisible: false, activeRunningSessionCount: 1)
+        let pollHiddenIdle = MonitorStore.pollingInterval(isInteractiveVisible: false, activeRunningSessionCount: 0)
+
+        let hubOld = DaemonHubInfo(pid: 101, httpsPort: nil, httpPort: 5001, lsVersion: "1.0", csrfToken: "t1")
+        let hubActive = DaemonHubInfo(pid: 102, httpsPort: nil, httpPort: 5002, lsVersion: "1.0", csrfToken: "t2")
+        let hubPinned = DaemonHubInfo(pid: 103, httpsPort: nil, httpPort: 5003, lsVersion: "1.0", csrfToken: "t3")
+
+        let candOld = LanguageServerClient.HubCandidateActivity(
+            hub: hubOld,
+            sessions: [SessionSummary(id: "s-old", title: "Old", stepCount: 1, lastModifiedTime: recNow.addingTimeInterval(-3600), status: "IDLE")]
+        )
+        let candActive = LanguageServerClient.HubCandidateActivity(
+            hub: hubActive,
+            sessions: [SessionSummary(id: "s-run", title: "Run", stepCount: 2, lastModifiedTime: recNow.addingTimeInterval(-10), status: "RUNNING")]
+        )
+        let candPinned = LanguageServerClient.HubCandidateActivity(
+            hub: hubPinned,
+            sessions: [SessionSummary(id: "s-pin", title: "Pin", stepCount: 3, lastModifiedTime: recNow.addingTimeInterval(-120), status: "IDLE")]
+        )
+        let bestActive = LanguageServerClient.selectBestHubCandidate([candOld, candActive, candPinned], preferredCascadeId: nil)
+        let bestPinned = LanguageServerClient.selectBestHubCandidate([candOld, candActive, candPinned], preferredCascadeId: "s-pin")
+
+        check(
+            pollVisibleIdle == 5.0
+                && pollHiddenRunning == 10.0
+                && pollHiddenIdle == 30.0
+                && bestActive?.hub.pid == 102
+                && bestPinned?.hub.pid == 103,
+            "MonitorStore adaptive polling (5s/10s/30s) & selectBestHubCandidate ranking behave as expected"
         )
 
         exit(tracker.hasFailed ? 1 : 0)

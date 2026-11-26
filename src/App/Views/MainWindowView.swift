@@ -148,6 +148,7 @@ struct MainWindowView: View {
             }
         }
         .environment(\.appLanguage, lang)
+        .environment(\.chartPalette, appModel.config.chartPalette)
         .frame(width: 820, height: 590)
         .onAppear {
             monitorStore.setInteractiveVisible(true)
