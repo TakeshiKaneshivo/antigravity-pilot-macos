@@ -2,6 +2,7 @@ import AppKit
 import Combine
 import CryptoKit
 import Darwin
+import SQLite3
 import SwiftUI
 
 @main
@@ -64,6 +65,17 @@ final class BuilderAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
         }
         antigravityUpdateStore.startAutoCheckSchedule { [weak self] in
             self?.appModel.config ?? .defaultConfig
+        }
+        let initialConfig = appModel.config
+        let monitorRef = monitorStore
+        Task.detached(priority: .background) {
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            let updated = await PricingSyncService.syncIfNeeded(config: initialConfig, support: appSupport)
+            if updated {
+                await MainActor.run {
+                    monitorRef.refreshHistory()
+                }
+            }
         }
 
         statusBarController = StatusBarController(
@@ -466,11 +478,11 @@ enum SmokeTestRunner {
             if let hub = LanguageServerClient.discoverLiveHub() {
                 let client = LanguageServerClient()
                 do {
-                    let (profile, pools, labels) = try await client.fetchUserStatus(hub: hub)
+                    let (profile, pools, labels, catalog) = try await client.fetchUserStatus(hub: hub)
                     let sessions = try await client.fetchSessions(hub: hub)
                     check(!pools.isEmpty, "LanguageServerClient decoded \(pools.count) quota pools (tier=\(profile?.tierName ?? "?"))")
                     if let first = sessions.first {
-                        let ctx = try await client.fetchSessionContext(hub: hub, session: first, modelLabels: labels)
+                        let ctx = try await client.fetchSessionContext(hub: hub, session: first, modelLabels: labels, modelCatalog: catalog)
                         check(ctx != nil, "LanguageServerClient decoded active context (\(ctx?.activeContextTokens ?? 0) tokens, model=\(ctx?.modelDisplayName ?? "?"))")
                     }
                 } catch {
@@ -1233,6 +1245,21 @@ enum SmokeTestRunner {
                     composedCG?.width == 1024 && composedCG?.height == 1024,
                     "RuntimeIconComposer composes 1024x1024 original+cat badge icon"
                 )
+
+                if let badgedImg = RuntimeIconComposer.composeOriginalWithBadgeNSImage(sourceApp: sourceApp, pilotIconPNG: iconPNGURL),
+                   let catImg = NSImage(contentsOf: iconPNGURL),
+                   let origImg = NSImage(contentsOf: sourceApp.appendingPathComponent("Contents/Resources/icon.icns")) {
+                    let bakedBadged = PilotIconCache.baked(badgedImg, key: "smoke-preview-badged", side: 44, cornerRadius: 10, shadowBlur: 6, shadowYOffset: 2, shadowAlpha: 0.14)
+                    let bakedCat = PilotIconCache.baked(catImg, key: "smoke-preview-cat", side: 44, cornerRadius: 10, shadowBlur: 6, shadowYOffset: 2, shadowAlpha: 0.14)
+                    let bakedOrig = PilotIconCache.baked(origImg, key: "smoke-preview-orig", side: 44, cornerRadius: 10, shadowBlur: 6, shadowYOffset: 2, shadowAlpha: 0.14)
+                    let dBadged = (bakedBadged.representations.first as? NSBitmapImageRep)?.representation(using: .png, properties: [:])
+                    let dCat = (bakedCat.representations.first as? NSBitmapImageRep)?.representation(using: .png, properties: [:])
+                    let dOrig = (bakedOrig.representations.first as? NSBitmapImageRep)?.representation(using: .png, properties: [:])
+                    check(
+                        dBadged != nil && dCat != nil && dOrig != nil && dBadged != dCat && dCat != dOrig && dBadged != dOrig,
+                        "PilotIconCache produces 3 distinct preview bitmaps for RuntimeIconStyle variants"
+                    )
+                }
             }
         }
 
@@ -1252,6 +1279,300 @@ enum SmokeTestRunner {
                 && decodedLegacyTrue?.useOriginalIcon == true
                 && roundTripCat?.runtimeIconStyle == .pilotCat,
             "ProxyConfig migrates legacy useOriginalIcon and round-trips runtimeIconStyle"
+        )
+
+        // 22. Official dual-window quota pools, Proto3 zero-value omission & Pro argon-weekly split
+        let nowDate = Date()
+        let futureISO = ISO8601DateFormatter().string(from: nowDate.addingTimeInterval(3600 * 4))
+        let futureWeekISO = ISO8601DateFormatter().string(from: nowDate.addingTimeInterval(3600 * 72))
+        let pastISO = ISO8601DateFormatter().string(from: nowDate.addingTimeInterval(-60))
+        let quotaSummaryJSON = """
+        {
+          "response": {
+            "groups": [
+              {
+                "displayName": "Gemini Models",
+                "buckets": [
+                  { "bucketId": "gemini-weekly", "window": "weekly", "remainingFraction": 0.05, "resetTime": "\(futureWeekISO)" },
+                  { "bucketId": "gemini-5h", "window": "5h", "remainingFraction": 0.86, "resetTime": "\(futureISO)" },
+                  { "bucketId": "argon-weekly", "window": "weekly", "resetTime": "\(futureWeekISO)" },
+                  { "bucketId": "stale-zero", "window": "5h", "resetTime": "\(pastISO)" }
+                ]
+              }
+            ]
+          }
+        }
+        """.data(using: .utf8)!
+        let parsedPools = LanguageServerClient.parseOfficialQuotaPools(data: quotaSummaryJSON, lang: .en, now: nowDate)
+        let mainGeminiPool = parsedPools.first(where: { $0.title == "Gemini Models" })
+        let argonSplitPool = parsedPools.first(where: { $0.title == "Gemini 4 Argon" })
+        check(
+            parsedPools.count == 2
+                && mainGeminiPool?.buckets.count == 2
+                && mainGeminiPool?.buckets.first?.windowKind == .fiveHour
+                && mainGeminiPool?.remainingPercent == 5
+                && argonSplitPool?.remainingPercent == 0,
+            "LanguageServerClient parses 5h+weekly quota pools, Proto3 0% omission, and Pro argon-weekly split"
+        )
+
+        // 23. Dynamic GetAvailableModels maxTokens & placeholder resolution
+        let modelsJSON = """
+        {
+          "response": {
+            "models": {
+              "claude-opus-5-5-high": {
+                "displayName": "Claude Opus 5.5 (High)",
+                "maxTokens": 1000000,
+                "model": "MODEL_PLACEHOLDER_M402"
+              }
+            }
+          }
+        }
+        """.data(using: .utf8)!
+        let catalog = LanguageServerClient.parseAvailableModels(data: modelsJSON)
+        let opusLimit = PricingCatalog.contextLimit(for: "MODEL_PLACEHOLDER_M402", modelCatalog: catalog)
+        let pricingSrcWithCat = PricingCatalog.ResolvedPricingSource(
+            customRules: [:],
+            syncedEntries: [:],
+            bundledEntries: [:],
+            syncedPlaceholders: [:],
+            bundledPlaceholders: [:],
+            modelCatalog: catalog
+        )
+        let resolvedNorm = PricingCatalog.normalizeModelKey("MODEL_PLACEHOLDER_M402", source: pricingSrcWithCat)
+        check(
+            opusLimit == 1_000_000 && resolvedNorm == "claude-opus-5.5",
+            "GetAvailableModels resolves 1M maxTokens for Claude Opus 5.5 and MODEL_PLACEHOLDER_M402"
+        )
+
+        // 24. 10-category tokenBreakdown & full step aggregation (harmonic TPS, compaction & anomaly)
+        let gmJSON = """
+        {
+          "generatorMetadata": [
+            {
+              "chatModel": {
+                "model": "MODEL_PLACEHOLDER_M402",
+                "usage": { "inputTokens": "1000", "cacheReadTokens": "9000", "outputTokens": "200", "thinkingOutputTokens": "50" },
+                "timeToFirstToken": "1.0s",
+                "streamingDuration": "2.0s",
+                "retryInfos": [{ "errorCode": 429, "errorMessage": "RESOURCE_EXHAUSTED: rate limit" }]
+              }
+            },
+            {
+              "chatModel": {
+                "model": "",
+                "promptSections": [{ "name": "Compaction Summary" }],
+                "usage": { "inputTokens": "500", "cacheReadTokens": "0", "outputTokens": "100" },
+                "timeToFirstToken": "9.0s",
+                "streamingDuration": "10.0s"
+              }
+            },
+            {
+              "chatModel": {
+                "model": "MODEL_PLACEHOLDER_M402",
+                "usage": { "inputTokens": "2000", "cacheReadTokens": "18000", "outputTokens": "400" },
+                "timeToFirstToken": "2.0s",
+                "streamingDuration": "4.0s",
+                "retryInfos": [{ "traceId": "ok-first-attempt" }],
+                "chatStartMetadata": {
+                  "contextWindowMetadata": {
+                    "tokenBreakdown": {
+                      "groups": [
+                        { "name": "System Prompt", "type": "TOKEN_TYPE_SYSTEM_PROMPT", "numTokens": 5000, "children": [
+                          { "name": "skills", "numTokens": 1200 },
+                          { "name": "user_rules", "numTokens": 800 }
+                        ]},
+                        { "name": "Mcp Tools", "type": "TOKEN_TYPE_MCP_TOOLS", "numTokens": 500 },
+                        { "name": "Tools", "type": "TOKEN_TYPE_TOOLS", "numTokens": 3000 },
+                        { "name": "Chat Messages", "type": "TOKEN_TYPE_CHAT_MESSAGES", "numTokens": 8000, "children": [
+                          { "name": "0: USER_INPUT", "numTokens": 1000 },
+                          { "name": "1: PLANNER_RESPONSE", "numTokens": 1500 },
+                          { "name": "2: GENERIC", "numTokens": 4500 },
+                          { "name": "3: SYSTEM_MESSAGE", "numTokens": 600 },
+                          { "name": "4: CHECKPOINT", "numTokens": 400 }
+                        ]}
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        }
+        """.data(using: .utf8)!
+        let dummySess = SessionSummary(id: "sess-1", title: "Test Session", stepCount: 3, lastModifiedTime: nowDate, status: "CASCADE_RUN_STATUS_IDLE", workspaceName: "antigravity-pilot-macos")
+        let ctxSnap = LanguageServerClient.parseGeneratorMetadataResponse(
+            data: gmJSON,
+            session: dummySess,
+            modelLabels: [:],
+            modelCatalog: catalog,
+            pricingSource: pricingSrcWithCat
+        )
+        let bdMap = Dictionary(uniqueKeysWithValues: (ctxSnap?.contextBreakdown ?? []).map { ($0.category, $0.tokens) })
+        let harmonicTPSOK = abs((ctxSnap?.sessionAvgTokensPerSecond ?? 0) - 100.0) < 0.01 // (200+400)/(2+4) = 100, excluding compaction
+        let avgTTFTOK = abs((ctxSnap?.sessionAvgTTFTSec ?? 0) - 1.5) < 0.01
+        check(
+            ctxSnap?.sessionStepCount == 3
+                && ctxSnap?.anomalyStepCount == 1
+                && ctxSnap?.recentSteps.first?.stepNumber == 3
+                && ctxSnap?.recentSteps.first?.retryCount == 0
+                && ctxSnap?.recentSteps.last?.anomalyKind == .rateLimit
+                && ctxSnap?.recentSteps.last?.retryCount == 1
+                && ctxSnap?.recentSteps[1].isCompactionStep == true
+                && harmonicTPSOK && avgTTFTOK
+                && bdMap[.skills] == 1200 && bdMap[.userRules] == 800 && bdMap[.systemPrompt] == 3000
+                && bdMap[.mcpTools] == 500 && bdMap[.systemTools] == 3000
+                && bdMap[.userMessages] == 1000 && bdMap[.assistantResponses] == 1500
+                && bdMap[.toolResults] == 4500 && bdMap[.subagents] == 600 && bdMap[.compaction] == 400,
+            "GeneratorMetadata parses 10-category breakdown, harmonic TPS, compaction & 429 anomalies"
+        )
+
+        // 25. Read-only SQLite LocalSessionIndexReader + .pbtxt fallback + Multi-source TranscriptScanner (Desktop + CLI)
+        let tempUsageRoot = tempUpdatesRoot.appendingPathComponent("multi-usage", isDirectory: true)
+        let desktopRoot = tempUsageRoot.appendingPathComponent("desktop", isDirectory: true)
+        let cliRoot = tempUsageRoot.appendingPathComponent("cli", isDirectory: true)
+        let desktopBrain = desktopRoot.appendingPathComponent("brain/11111111-1111-1111-1111-111111111111/.system_generated/logs", isDirectory: true)
+        let cliBrain = cliRoot.appendingPathComponent("brain/22222222-2222-2222-2222-222222222222/.system_generated/logs", isDirectory: true)
+        let cliAnn = cliRoot.appendingPathComponent("annotations", isDirectory: true)
+        try? FileManager.default.createDirectory(at: desktopBrain, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(at: cliBrain, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(at: cliAnn, withIntermediateDirectories: true)
+
+        let dbURL = desktopRoot.appendingPathComponent("conversation_summaries.db")
+        var testDb: OpaquePointer?
+        if sqlite3_open(dbURL.path, &testDb) == SQLITE_OK, let testDb {
+            sqlite3_exec(testDb, "CREATE TABLE conversation_summaries (conversation_id text PRIMARY KEY, title text, workspace_uris text, parent_conversation_id text, nesting_depth integer, agent_name text);", nil, nil, nil)
+            sqlite3_exec(testDb, "INSERT INTO conversation_summaries VALUES ('11111111-1111-1111-1111-111111111111', 'Pilot Refactor', '[\"file:///Users/dev/my-repo\"]', '', 0, '');", nil, nil, nil)
+            sqlite3_close(testDb)
+        }
+        try? "title:\"CLI Task Title\"\n".write(to: cliAnn.appendingPathComponent("22222222-2222-2222-2222-222222222222.pbtxt"), atomically: true, encoding: .utf8)
+
+        let todayStr = ISO8601DateFormatter().string(from: nowDate)
+        let trLineDesktop = #"{"step_index":1,"type":"PLANNER_RESPONSE","created_at":"\#(todayStr)","model":"gemini-4-neon","input_tokens":100000,"cache_read_tokens":900000,"output_tokens":10000}"# + "\n"
+        let trLineCLI = #"{"step_index":1,"type":"PLANNER_RESPONSE","created_at":"\#(todayStr)","model":"claude-opus-5-5-high","input_tokens":50000,"cache_read_tokens":50000,"output_tokens":5000}"# + "\n"
+        try? trLineDesktop.write(to: desktopBrain.appendingPathComponent("transcript.jsonl"), atomically: true, encoding: .utf8)
+        try? trLineCLI.write(to: cliBrain.appendingPathComponent("transcript.jsonl"), atomically: true, encoding: .utf8)
+
+        // Also place a corrupt non-SQLite file in cliRoot to verify header check rejects safely
+        try? Data("not-a-sqlite-file".utf8).write(to: cliRoot.appendingPathComponent("conversation_summaries.db"))
+
+        let multiSnap = TranscriptScanner.scanMultiSource(
+            roots: [
+                TranscriptScanner.ArchiveRoot(brainDir: desktopRoot.appendingPathComponent("brain"), rootDir: desktopRoot, source: .desktop),
+                TranscriptScanner.ArchiveRoot(brainDir: cliRoot.appendingPathComponent("brain"), rootDir: cliRoot, source: .cli)
+            ],
+            cacheURL: tempUsageRoot.appendingPathComponent("usage_cache_v4.json"),
+            pricingSource: pricingSrcWithCat,
+            liveSessions: []
+        )
+        let todayTot = multiSnap.totalsByPeriod[.today]
+        let topProject = multiSnap.projectSummariesByPeriod[.today]?.first
+        let cliSession = multiSnap.sessionSummariesByPeriod[.today]?.first(where: { $0.clientSource == .cli })
+        check(
+            multiSnap.desktopArchiveCount == 1
+                && multiSnap.cliArchiveCount == 1
+                && (todayTot?.cacheSavingsUSD ?? 0) > 2.5
+                && topProject?.displayName == "my-repo"
+                && cliSession?.title == "CLI Task Title",
+            "LocalSessionIndexReader & TranscriptScanner merge Desktop+CLI archives, projects, sessions & cache savings"
+        )
+
+        // 26. PricingCatalog priority (custom > synced > bundled) & >200K tier preservation
+        let pricingTestRoot = tempUpdatesRoot.appendingPathComponent("pricing-prio", isDirectory: true)
+        let prioSupport = AppSupport(rootOverride: pricingTestRoot)
+        try? prioSupport.ensureRoot()
+        let syncedNoTiersJSON = """
+        {
+          "schemaVersion": 1,
+          "catalogVersion": "2026.11.26.test",
+          "pricing": {
+            "gemini-3.1-pro": { "input": 2.00, "cache": 0.20, "output": 12.00 },
+            "gpt-oss-120b": { "input": 0.80, "cache": 0.10, "output": 2.40 }
+          }
+        }
+        """.data(using: .utf8)!
+        try? syncedNoTiersJSON.write(to: prioSupport.syncedPricingCatalogURL)
+        let customOverrideJSON = #"{"gpt-oss-120b":[{"inputPerMillion":9.0,"outputPerMillion":9.0,"cacheReadPerMillion":0.9}]}"#.data(using: .utf8)!
+        try? customOverrideJSON.write(to: prioSupport.customPricingURL)
+
+        let prioSrc = PricingCatalog.ResolvedPricingSource.load(
+            customPricingURL: prioSupport.customPricingURL,
+            syncedCatalogURL: prioSupport.syncedPricingCatalogURL,
+            bundledCatalogURL: nil,
+            modelCatalog: [:]
+        )
+        let customPrioCost = PricingCatalog.estimateCostAndSavingsUSD(
+            model: "gpt-oss-120b",
+            inputTokens: 1_000_000,
+            cacheReadTokens: 0,
+            outputTokens: 0,
+            dateKey: "2026-11-26",
+            source: prioSrc
+        ).costUSD
+        let over200kCost = PricingCatalog.estimateCostAndSavingsUSD(
+            model: "gemini-3.1-pro",
+            inputTokens: 250_000,
+            cacheReadTokens: 0,
+            outputTokens: 0,
+            dateKey: "2026-11-26",
+            source: prioSrc
+        ).costUSD // Should preserve >200K tier ($4/M -> $1.00) rather than flat $2/M ($0.50)
+        check(
+            abs(customPrioCost - 9.0) < 0.001 && abs(over200kCost - 1.0) < 0.001,
+            "PricingCatalog enforces custom > synced > built-in priority and preserves >200K tier rules"
+        )
+
+        // 27. PricingSyncService loopback HTTP sync & invalid JSON rejection
+        if let pricingPort = spawnMockJSONServer(payload: syncedNoTiersJSON) {
+            let syncRoot = tempUpdatesRoot.appendingPathComponent("pricing-sync-ok", isDirectory: true)
+            let syncSupport = AppSupport(rootOverride: syncRoot)
+            let syncSem = DispatchSemaphore(value: 0)
+            Task.detached {
+                let changed = await PricingSyncService.syncIfNeeded(
+                    config: .defaultConfig,
+                    support: syncSupport,
+                    overrideURL: URL(string: "http://127.0.0.1:\(pricingPort)/pricing-catalog.json")!,
+                    allowInsecureHTTPOverride: true,
+                    force: true
+                )
+                let loaded = PricingCatalog.loadExternalCatalog(from: syncSupport.syncedPricingCatalogURL)
+                let syncOK = changed && loaded?.catalogVersion == "2026.11.26.test"
+                check(syncOK, "PricingSyncService fetches and validates pricing-catalog.json over loopback HTTP")
+                syncSem.signal()
+            }
+            _ = syncSem.wait(timeout: .now() + 5)
+        }
+        if let badPort = spawnMockJSONServer(payload: Data(#"{"pricing":{"bad":{"input":-5,"cache":0,"output":1}}}"#.utf8)) {
+            let badRoot = tempUpdatesRoot.appendingPathComponent("pricing-sync-bad", isDirectory: true)
+            let badSupport = AppSupport(rootOverride: badRoot)
+            let badSem = DispatchSemaphore(value: 0)
+            Task.detached {
+                let changed = await PricingSyncService.syncIfNeeded(
+                    config: .defaultConfig,
+                    support: badSupport,
+                    overrideURL: URL(string: "http://127.0.0.1:\(badPort)/pricing-catalog.json")!,
+                    allowInsecureHTTPOverride: true,
+                    force: true
+                )
+                let rejectedBad = !changed && !FileManager.default.fileExists(atPath: badSupport.syncedPricingCatalogURL.path)
+                check(rejectedBad, "PricingSyncService rejects negative/invalid pricing payloads safely")
+                badSem.signal()
+            }
+            _ = badSem.wait(timeout: .now() + 5)
+        }
+
+        // 28. StoredSubscriptionTier inference & persistence
+        let freeProfile = UserProfileInfo(name: "A", email: "a@example.com", tierName: "Google AI Free", tierId: "g1-free-tier")
+        let ultraProfile = UserProfileInfo(name: "B", email: "b@example.com", tierName: "Google AI Ultra", tierId: "g1-ultra-tier")
+        let tierURL = tempUpdatesRoot.appendingPathComponent("last_known_tier.json")
+        if let st = ultraProfile.toStoredTier() {
+            StoredSubscriptionTier.save(st, to: tierURL)
+        }
+        let loadedTier = StoredSubscriptionTier.load(from: tierURL)
+        check(
+            freeProfile.tierKind == .free && freeProfile.monthlyReferenceUSD == nil
+                && ultraProfile.tierKind == .ultra && abs((loadedTier?.monthlyReferenceUSD ?? 0) - 249.99) < 0.01,
+            "SubscriptionTierKind distinguishes Free vs Pro vs Ultra and persists StoredSubscriptionTier"
         )
 
         exit(tracker.hasFailed ? 1 : 0)
@@ -1443,6 +1764,56 @@ enum SmokeTestRunner {
                 }
                 _ = body.withUnsafeBytes { raw in
                     Darwin.send(clientFd, raw.baseAddress, body.count, 0)
+                }
+                close(clientFd)
+            }
+            close(listenFd)
+        }
+        return port
+    }
+
+    private static func spawnMockJSONServer(payload: Data) -> UInt16? {
+        let listenFd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)
+        guard listenFd >= 0 else { return nil }
+        var yes: Int32 = 1
+        setsockopt(listenFd, SOL_SOCKET, SO_REUSEADDR, &yes, socklen_t(MemoryLayout<Int32>.size))
+
+        var addr = sockaddr_in()
+        addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_port = 0
+        addr.sin_addr.s_addr = inet_addr("127.0.0.1")
+
+        let bindOk = withUnsafePointer(to: &addr) { ptr -> Int32 in
+            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sa in
+                Darwin.bind(listenFd, sa, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        guard bindOk == 0, Darwin.listen(listenFd, 2) == 0 else {
+            close(listenFd)
+            return nil
+        }
+
+        var boundAddr = sockaddr_in()
+        var len = socklen_t(MemoryLayout<sockaddr_in>.size)
+        _ = withUnsafeMutablePointer(to: &boundAddr) { ptr in
+            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sa in
+                getsockname(listenFd, sa, &len)
+            }
+        }
+        let port = UInt16(bigEndian: boundAddr.sin_port)
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            let clientFd = Darwin.accept(listenFd, nil, nil)
+            if clientFd >= 0 {
+                var buf = [UInt8](repeating: 0, count: 1024)
+                _ = Darwin.recv(clientFd, &buf, buf.count, 0)
+                let header = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: \(payload.count)\r\nConnection: close\r\n\r\n"
+                _ = Data(header.utf8).withUnsafeBytes { raw in
+                    Darwin.send(clientFd, raw.baseAddress, header.utf8.count, 0)
+                }
+                _ = payload.withUnsafeBytes { raw in
+                    Darwin.send(clientFd, raw.baseAddress, payload.count, 0)
                 }
                 close(clientFd)
             }

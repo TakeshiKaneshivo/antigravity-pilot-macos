@@ -7,6 +7,7 @@ import { getMonthNames, resolveLanguage, t, t4, type ResolvedLang } from './i18n
 
 type TabKey = 'monitor' | 'usage';
 type PeriodKey = 'today' | 'days7' | 'days30' | 'all';
+type BreakdownDim = 'model' | 'project' | 'session';
 
 interface ProxyConfigDTO {
   configExists: boolean;
@@ -40,6 +41,37 @@ interface SessionDTO {
   stepCount: number;
   status: string;
   isRunning: boolean;
+  workspaceName?: string;
+  branchName?: string;
+  parentConversationId?: string;
+  nestingDepth?: number;
+  agentRole?: string;
+}
+
+interface ContextBreakdownItemDTO {
+  category: string;
+  label: string;
+  colorIndex: number;
+  tokens: number;
+  fraction: number;
+}
+
+interface SessionStepItemDTO {
+  stepNumber: number;
+  modelId: string;
+  modelDisplayName: string;
+  activeContextTokens: number;
+  outputTokens: number;
+  thinkingOutputTokens: number;
+  responseOutputTokens: number;
+  timeToFirstTokenSec: number | null;
+  tokensPerSecond: number | null;
+  estimatedCostUSD: number;
+  isCompactionStep: boolean;
+  retryCount: number;
+  anomalyKind?: string | null;
+  anomalyLabel?: string | null;
+  anomalyExcerpt?: string | null;
 }
 
 interface ActiveContextDTO {
@@ -59,6 +91,24 @@ interface ActiveContextDTO {
   cacheHitRatio: number;
   timeToFirstTokenSec: number | null;
   tokensPerSecond: number | null;
+  sessionStepCount?: number;
+  sessionAvgTokensPerSecond?: number | null;
+  sessionAvgTTFTSec?: number | null;
+  sessionTotalCostUSD?: number;
+  anomalyStepCount?: number;
+  contextBreakdown?: ContextBreakdownItemDTO[];
+  recentSteps?: SessionStepItemDTO[];
+}
+
+interface QuotaBucketDTO {
+  id: string;
+  windowKind: '5h' | 'weekly' | 'unknown';
+  windowLabel: string;
+  displayName: string;
+  remainingFraction: number;
+  remainingPercent: number;
+  resetCountdownText: string;
+  shortCountdownText: string;
 }
 
 interface QuotaPoolDTO {
@@ -67,6 +117,8 @@ interface QuotaPoolDTO {
   remainingFraction: number;
   remainingPercent: number;
   resetCountdownText: string;
+  tightestWindowKind?: string;
+  buckets?: QuotaBucketDTO[];
   models: Array<{
     id: string;
     label: string;
@@ -76,6 +128,7 @@ interface QuotaPoolDTO {
 
 interface LiveSnapshotDTO {
   connected: boolean;
+  activeRunningCount?: number;
   hub?: {
     pid: number;
     lsVersion?: string;
@@ -84,6 +137,8 @@ interface LiveSnapshotDTO {
     name: string;
     email: string;
     tierName: string;
+    tierKind?: 'free' | 'pro' | 'ultra' | 'unknown';
+    monthlyReferenceUSD?: number | null;
   };
   sessions: SessionDTO[];
   selectedCascadeId?: string;
@@ -103,6 +158,7 @@ interface DailyBucketDTO {
   totalTokens: number;
   requestCount: number;
   estimatedCostUSD: number;
+  cacheSavingsUSD?: number;
 }
 
 interface HeatmapCellDTO {
@@ -122,6 +178,35 @@ interface ModelUsageDTO {
   totalTokens: number;
   requestCount: number;
   estimatedCostUSD: number;
+  cacheSavingsUSD?: number;
+}
+
+interface ProjectUsageDTO {
+  projectKey: string;
+  displayName: string;
+  inputTokens: number;
+  cacheReadTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  requestCount: number;
+  sessionCount: number;
+  estimatedCostUSD: number;
+  cacheSavingsUSD?: number;
+}
+
+interface SessionUsageDTO {
+  cascadeId: string;
+  title: string;
+  projectName?: string;
+  clientSource: 'desktop' | 'cli';
+  inputTokens: number;
+  cacheReadTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  requestCount: number;
+  estimatedCostUSD: number;
+  cacheSavingsUSD?: number;
+  lastDateKey: string;
 }
 
 interface UsageHistoryDTO {
@@ -129,19 +214,32 @@ interface UsageHistoryDTO {
   heatmapWeeks: Array<Array<HeatmapCellDTO | null>>;
   totalsByPeriod: Record<PeriodKey, DailyBucketDTO>;
   modelSummariesByPeriod: Record<PeriodKey, ModelUsageDTO[]>;
+  projectSummariesByPeriod?: Record<PeriodKey, ProjectUsageDTO[]>;
+  sessionSummariesByPeriod?: Record<PeriodKey, SessionUsageDTO[]>;
+  subscriptionTier?: {
+    tierKind: 'free' | 'pro' | 'ultra' | 'unknown';
+    tierName: string;
+    monthlyReferenceUSD: number | null;
+  };
   proSubscriptionMonthlyUSD: number;
   scannedFilesCount: number;
+  desktopArchiveCount?: number;
+  cliArchiveCount?: number;
   scannedAtISO: string;
 }
 
 interface AppState {
   activeTab: TabKey;
   selectedPeriod: PeriodKey;
+  breakdownDim: BreakdownDim;
   pinnedCascadeId: string | null;
   displayedCascadeId: string | null;
   selectedHeatmapDate: string | null;
   hoveredBarDate: string | null;
   showNoProxy: boolean;
+  breakdownExpanded: boolean;
+  stepsExpanded: boolean;
+  showAllSteps: boolean;
   expandedPools: Set<string>;
   collapsedCards: Set<string>;
   didAutoScrollHeatmap: boolean;
@@ -182,11 +280,15 @@ function saveCollapsedCards(cards: Set<string>): void {
 const state: AppState = {
   activeTab: 'monitor',
   selectedPeriod: 'days30',
+  breakdownDim: 'model',
   pinnedCascadeId: null,
   displayedCascadeId: null,
   selectedHeatmapDate: null,
   hoveredBarDate: null,
   showNoProxy: false,
+  breakdownExpanded: false,
+  stepsExpanded: false,
+  showAllSteps: false,
   expandedPools: new Set<string>(),
   collapsedCards: loadCollapsedCards(),
   didAutoScrollHeatmap: false,
@@ -207,6 +309,19 @@ const PALETTE = [
   'var(--chart-4)',
   'var(--chart-5)',
   'var(--chart-6)',
+];
+
+const CTX_PALETTE = [
+  'var(--ctx-1)',
+  'var(--ctx-2)',
+  'var(--ctx-3)',
+  'var(--ctx-4)',
+  'var(--ctx-5)',
+  'var(--ctx-6)',
+  'var(--ctx-7)',
+  'var(--ctx-8)',
+  'var(--ctx-9)',
+  'var(--ctx-10)',
 ];
 
 function currentLang(): ResolvedLang {
@@ -235,6 +350,19 @@ function getActiveTabCardIds(): string[] {
     return state.live?.connected ? ['proxy', 'context', 'quota'] : ['proxy', 'context'];
   }
   return ['heatmap', 'daily', 'models'];
+}
+
+function hasStepsCard(): boolean {
+  return state.activeTab === 'monitor'
+    && Boolean(state.live?.connected)
+    && (state.live?.activeContext?.recentSteps?.length ?? 0) > 0;
+}
+
+function isAllActiveCardsCollapsed(): boolean {
+  const ids = getActiveTabCardIds();
+  const persistedCollapsed = ids.length > 0 && ids.every((id) => state.collapsedCards.has(id));
+  if (!hasStepsCard()) return persistedCollapsed;
+  return persistedCollapsed && !state.stepsExpanded;
 }
 
 function collapseChevron(cardId: string, collapsed: boolean): string {
@@ -411,19 +539,23 @@ function renderTopBar(): string {
         `Подключён Local LS ${lsJoined}`
       )
     : tr('等待 Antigravity 运行', 'Waiting for Antigravity');
+  const activeCount = live?.activeRunningCount ?? 0;
+  const runningPill = connected && activeCount > 0
+    ? `<span class="pill ok">● ${tr4(`${activeCount} 运行中`, `${activeCount} 執行中`, `${activeCount} running`, `${activeCount} активн.`)}</span>`
+    : '';
   const userPill = live?.userProfile?.email
     ? `<span class="pill">${escapeHtml(live.userProfile.email)} · ${escapeHtml(live.userProfile.tierName)}</span>`
     : '';
 
   const isBusy = state.isRefreshingLive || state.isRefreshingUsage;
-  const tabCardIds = getActiveTabCardIds();
-  const allCollapsed = tabCardIds.length > 0 && tabCardIds.every((id) => state.collapsedCards.has(id));
+  const allCollapsed = isAllActiveCardsCollapsed();
 
   return `
     <div class="topbar">
       <div class="brand-status">
         <span class="status-dot ${connected ? 'ok' : ''}"></span>
         <span class="status-label">${connText}</span>
+        ${runningPill}
         ${userPill}
       </div>
       <div class="topbar-controls">
@@ -522,6 +654,23 @@ function renderProxyCard(live: LiveSnapshotDTO | null): string {
   `;
 }
 
+function formatSessionOption(s: SessionDTO): string {
+  const runMark = s.isRunning ? '● ' : '';
+  const isSub = (s.nestingDepth ?? 0) > 0 || (Boolean(s.parentConversationId) && s.parentConversationId !== s.id);
+  if (isSub) {
+    const role = s.agentRole || tr('子代理', 'Subagent');
+    const isShortFallback = s.title.toLowerCase() === s.id.slice(0, 8).toLowerCase();
+    if (isShortFallback && s.agentRole) {
+      return `${runMark}↳ ${role}`;
+    }
+    return `${runMark}↳ [${role}] ${s.title}`;
+  }
+  if (s.workspaceName) {
+    return `${runMark}[${s.workspaceName}] ${s.title}`;
+  }
+  return `${runMark}${s.title}`;
+}
+
 function renderContextCard(live: LiveSnapshotDTO | null): string {
   if (!live) return '';
   const collapsed = state.collapsedCards.has('context');
@@ -549,7 +698,7 @@ function renderContextCard(live: LiveSnapshotDTO | null): string {
   const selectHtml = sessions.length > 0
     ? `<select class="select" data-action="select-session">
         <option value="" ${!state.pinnedCascadeId ? 'selected' : ''}>${escapeHtml(autoLabel)}</option>
-        ${sessions.map((s) => `<option value="${escapeHtml(s.id)}" ${s.id === state.pinnedCascadeId ? 'selected' : ''}>${escapeHtml(s.title)}</option>`).join('')}
+        ${sessions.map((s) => `<option value="${escapeHtml(s.id)}" ${s.id === state.pinnedCascadeId ? 'selected' : ''}>${escapeHtml(formatSessionOption(s))}</option>`).join('')}
       </select>`
     : '';
 
@@ -581,6 +730,49 @@ function renderContextCard(live: LiveSnapshotDTO | null): string {
   const cachePct = Math.min(100, (ctx.cacheReadTokens / limit) * 100);
   const inputPct = Math.min(100 - cachePct, (ctx.inputTokens / limit) * 100);
   const cacheRate = Math.round(ctx.cacheHitRatio * 100);
+
+  const avgTtftSub = ctx.sessionAvgTTFTSec != null
+    ? tr4(`均 ${ctx.sessionAvgTTFTSec.toFixed(2)} s`, `均 ${ctx.sessionAvgTTFTSec.toFixed(2)} s`, `Avg ${ctx.sessionAvgTTFTSec.toFixed(2)} s`, `Ср. ${ctx.sessionAvgTTFTSec.toFixed(2)} s`)
+    : '';
+  const avgTpsSub = ctx.sessionAvgTokensPerSecond != null
+    ? tr4(`均 ${ctx.sessionAvgTokensPerSecond.toFixed(1)} t/s`, `均 ${ctx.sessionAvgTokensPerSecond.toFixed(1)} t/s`, `Avg ${ctx.sessionAvgTokensPerSecond.toFixed(1)} t/s`, `Ср. ${ctx.sessionAvgTokensPerSecond.toFixed(1)} t/s`)
+    : '';
+  const stepCount = ctx.sessionStepCount ?? 1;
+  const sessionCostSub = tr4(`共 ${stepCount} 步`, `共 ${stepCount} 步`, `${stepCount} steps`, `${stepCount} шаг.`);
+  const thkRepSub = `${tr4('思/答', '思/答', 'Thk/Rep', 'Мыс/Отв')} ${compactTokensShort(ctx.thinkingOutputTokens)}/${compactTokensShort(ctx.responseOutputTokens)}`;
+
+  const breakdown = ctx.contextBreakdown ?? [];
+  const top3Summary = breakdown.slice(0, 3).map((b) => `${escapeHtml(b.label)} ${Math.round(b.fraction * 100)}%`).join(' · ');
+  const breakdownHtml = breakdown.length > 0
+    ? `
+      <div class="ctx-breakdown-wrap">
+        <div class="ctx-breakdown-bar">
+          ${breakdown.map((b) => {
+            const color = CTX_PALETTE[b.colorIndex % CTX_PALETTE.length];
+            const wPct = Math.max(1.2, b.fraction * 100);
+            return `<div class="ctx-breakdown-seg" style="width:${wPct.toFixed(2)}%;background:${color}" title="${escapeHtml(b.label)}: ${compactTokens(b.tokens)}"></div>`;
+          }).join('')}
+        </div>
+        <button type="button" class="details-toggle" data-action="toggle-breakdown">
+          ${state.breakdownExpanded ? '▾' : '▸'} ${tr('上下文构成', 'Context Breakdown')}${!state.breakdownExpanded && top3Summary ? ` · ${top3Summary}` : ''}
+        </button>
+        ${state.breakdownExpanded ? `
+          <div class="ctx-breakdown-grid">
+            ${breakdown.map((b) => {
+              const color = CTX_PALETTE[b.colorIndex % CTX_PALETTE.length];
+              return `
+                <div class="ctx-breakdown-item">
+                  <span class="dot" style="background:${color};flex-shrink:0;"></span>
+                  <span class="ctx-breakdown-name">${escapeHtml(b.label)}</span>
+                  <span class="mono" style="font-weight:600;flex-shrink:0;">${compactTokens(b.tokens)} · ${Math.round(b.fraction * 100)}%</span>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        ` : ''}
+      </div>
+    `
+    : '';
 
   return `
     <div class="card ${collapsed ? 'is-collapsed' : ''}">
@@ -627,20 +819,26 @@ function renderContextCard(live: LiveSnapshotDTO | null): string {
           <div class="metric-cell">
             <div class="metric-title">${tr('缓存命中率', 'Cache Hit Rate')}</div>
             <div class="metric-value">${cacheRate}%</div>
+            <div class="metric-sub">${thkRepSub}</div>
           </div>
           <div class="metric-cell">
             <div class="metric-title">${tr('首字延迟 (TTFT)', 'TTFT')}</div>
             <div class="metric-value">${ctx.timeToFirstTokenSec != null ? `${ctx.timeToFirstTokenSec.toFixed(2)} s` : '--'}</div>
+            ${avgTtftSub ? `<div class="metric-sub">${avgTtftSub}</div>` : ''}
           </div>
           <div class="metric-cell">
             <div class="metric-title">${tr('输出速度', 'Output Speed')}</div>
             <div class="metric-value">${ctx.tokensPerSecond != null ? `${ctx.tokensPerSecond.toFixed(1)} tok/s` : '--'}</div>
+            ${avgTpsSub ? `<div class="metric-sub">${avgTpsSub}</div>` : ''}
           </div>
           <div class="metric-cell">
-            <div class="metric-title">${tr('思考 / 回复', 'Thinking / Reply')}</div>
-            <div class="metric-value">${compactTokens(ctx.thinkingOutputTokens)} / ${compactTokens(ctx.responseOutputTokens)}</div>
+            <div class="metric-title">${tr('本会话费用', 'Session Cost')}</div>
+            <div class="metric-value">${formatUSD(ctx.sessionTotalCostUSD ?? 0)}</div>
+            <div class="metric-sub">${sessionCostSub}</div>
           </div>
         </div>
+
+        ${breakdownHtml}
       </div>
     </div>
   `;
@@ -678,18 +876,41 @@ function renderQuotaCard(live: LiveSnapshotDTO | null): string {
               ${pools.map((p) => {
                 const barColor = p.remainingPercent <= 15 ? 'var(--danger)' : p.remainingPercent <= 35 ? 'var(--warning)' : 'var(--success)';
                 const expanded = state.expandedPools.has(p.id);
+                const buckets = p.buckets ?? [];
+                const dualHtml = buckets.length >= 2
+                  ? `<div class="dual-buckets">
+                      ${buckets.slice(0, 2).map((b) => {
+                        const bColor = b.remainingPercent <= 15 ? 'var(--danger)' : b.remainingPercent <= 35 ? 'var(--warning)' : 'var(--success)';
+                        return `
+                          <div class="bucket-col">
+                            <div class="bucket-head">
+                              <span class="bucket-label">${escapeHtml(b.windowLabel)}</span>
+                              <span class="bucket-cd">${escapeHtml(b.shortCountdownText)}</span>
+                              <span class="pool-pct" style="color:${bColor}">${b.remainingPercent}%</span>
+                            </div>
+                            <div class="linear-track">
+                              <div class="linear-fill" style="width:${Math.min(100, Math.max(0, b.remainingPercent))}%;background:${bColor}"></div>
+                            </div>
+                          </div>
+                        `;
+                      }).join('')}
+                    </div>`
+                  : `<div class="linear-track">
+                      <div class="linear-fill" style="width:${Math.min(100, Math.max(0, p.remainingPercent))}%;background:${barColor}"></div>
+                    </div>`;
+
                 return `
                   <div class="pool-item">
                     <div class="pool-row">
                       <span class="pool-title" title="${escapeHtml(p.title)}">${escapeHtml(p.title)}</span>
-                      <div class="pool-meta">
-                        <span class="muted">${escapeHtml(p.resetCountdownText)}</span>
-                        <span class="pool-pct" style="color:${barColor}">${p.remainingPercent}%</span>
-                      </div>
+                      ${buckets.length < 2 ? `
+                        <div class="pool-meta">
+                          <span class="muted">${escapeHtml(p.resetCountdownText)}</span>
+                          <span class="pool-pct" style="color:${barColor}">${p.remainingPercent}%</span>
+                        </div>
+                      ` : ''}
                     </div>
-                    <div class="linear-track">
-                      <div class="linear-fill" style="width:${Math.min(100, Math.max(0, p.remainingPercent))}%;background:${barColor}"></div>
-                    </div>
+                    ${dualHtml}
                     ${p.models.length > 1 ? `
                       <button type="button" class="details-toggle" data-action="toggle-pool" data-pool-id="${escapeHtml(p.id)}">
                         ${expanded ? '▾' : '▸'} ${tr4(
@@ -706,6 +927,72 @@ function renderQuotaCard(live: LiveSnapshotDTO | null): string {
               }).join('')}
             </div>`
         }
+      </div>
+    </div>
+  `;
+}
+
+function renderStepsCard(live: LiveSnapshotDTO | null): string {
+  const ctx = live?.activeContext;
+  const steps = ctx?.recentSteps ?? [];
+  if (!live || !live.connected || !ctx || steps.length === 0) return '';
+
+  const collapsed = !state.stepsExpanded;
+  const stepCount = ctx.sessionStepCount ?? steps.length;
+  const avgTps = ctx.sessionAvgTokensPerSecond != null ? `${ctx.sessionAvgTokensPerSecond.toFixed(1)} tok/s` : '--';
+  const totalCost = formatUSD(ctx.sessionTotalCostUSD ?? 0);
+  const anomalyCount = ctx.anomalyStepCount ?? 0;
+  const visibleSteps = state.showAllSteps ? steps : steps.slice(0, 20);
+
+  return `
+    <div class="card ${collapsed ? 'is-collapsed' : ''}">
+      <div class="card-header collapsible-header" data-action="toggle-steps">
+        <div class="card-title-group">
+          <button type="button" class="collapse-btn" data-action="toggle-steps" aria-expanded="${!collapsed}">▾</button>
+          <h3 class="card-title">${tr4(
+            `调用步骤明细（${stepCount} 步 · 均速 ${avgTps} · ${totalCost}）`,
+            `呼叫步驟明細（${stepCount} 步 · 均速 ${avgTps} · ${totalCost}）`,
+            `Step Details (${stepCount} steps · Avg ${avgTps} · ${totalCost})`,
+            `Шаги вызовов (${stepCount} · Ср. ${avgTps} · ${totalCost})`
+          )}</h3>
+        </div>
+        ${anomalyCount > 0 ? `<span class="pill warn">${tr4(`${anomalyCount} 异常`, `${anomalyCount} 異常`, `${anomalyCount} anomaly`, `${anomalyCount} сбоев`)}</span>` : ''}
+      </div>
+      <div class="card-body">
+        <div class="steps-table">
+          <div class="step-head">
+            <span>#</span>
+            <span>${tr('模型', 'Model')}</span>
+            <span style="text-align:right;">${tr('上下文', 'Context')}</span>
+            <span class="step-col-out" style="text-align:right;">${tr('输出', 'Output')}</span>
+            <span style="text-align:right;">TTFT / TPS</span>
+            <span style="text-align:right;">${tr('费用', 'Cost')}</span>
+          </div>
+          ${visibleSteps.map((s) => {
+            const rowCls = s.anomalyKind ? 'is-anomaly' : s.isCompactionStep ? 'is-compaction' : '';
+            const ttftStr = s.timeToFirstTokenSec != null ? `${s.timeToFirstTokenSec.toFixed(1)}s` : '--';
+            const tpsStr = s.tokensPerSecond != null ? `${s.tokensPerSecond.toFixed(0)}` : '--';
+            return `
+              <div class="step-row ${rowCls}" title="${escapeHtml(s.anomalyExcerpt ?? '')}">
+                <span class="mono" style="color:var(--text-tertiary)">${s.stepNumber}</span>
+                <span style="display:flex;align-items:center;gap:4px;min-width:0;">
+                  <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(s.modelDisplayName)}</span>
+                  ${s.isCompactionStep ? `<span class="tag-badge">${tr('压缩', 'Compact')}</span>` : ''}
+                  ${s.anomalyLabel ? `<span class="tag-badge warn">${escapeHtml(s.anomalyLabel)}</span>` : ''}
+                </span>
+                <span class="mono" style="text-align:right;">${compactTokens(s.activeContextTokens)}</span>
+                <span class="mono step-col-out" style="text-align:right;color:var(--text-secondary);">${compactTokens(s.outputTokens)}</span>
+                <span class="mono" style="text-align:right;color:var(--text-secondary);">${ttftStr} · ${tpsStr}/s</span>
+                <span class="mono" style="text-align:right;font-weight:600;">${formatUSD(s.estimatedCostUSD)}</span>
+              </div>
+            `;
+          }).join('')}
+          ${steps.length > 20 && !state.showAllSteps ? `
+            <button type="button" class="details-toggle" data-action="show-all-steps">
+              ${tr4(`显示全部最近 ${steps.length} 步`, `顯示全部最近 ${steps.length} 步`, `Show all ${steps.length} recent steps`, `Показать все ${steps.length} шагов`)}
+            </button>
+          ` : ''}
+        </div>
       </div>
     </div>
   `;
@@ -744,6 +1031,38 @@ function heatmapFill(level: number): string {
   }
 }
 
+function resolveTierCostSubtitle(usage: UsageHistoryDTO, totalCostUSD: number): string {
+  const liveTier = state.live?.userProfile;
+  const tierKind = (liveTier?.tierKind && liveTier.tierKind !== 'unknown')
+    ? liveTier.tierKind
+    : (usage.subscriptionTier?.tierKind ?? 'unknown');
+  const monthlyRef = (liveTier?.monthlyReferenceUSD ?? usage.subscriptionTier?.monthlyReferenceUSD) ?? null;
+
+  if (monthlyRef != null && monthlyRef > 0) {
+    const ratio = totalCostUSD / monthlyRef;
+    if (tierKind === 'ultra') {
+      return tr4(
+        `≈ ${ratio.toFixed(1)}x $249.99 Ultra 月费`,
+        `≈ ${ratio.toFixed(1)}x $249.99 Ultra 月費`,
+        `≈ ${ratio.toFixed(1)}x $249.99 Ultra/mo`,
+        `≈ ${ratio.toFixed(1)}x $249.99 Ultra/мес`
+      );
+    }
+    if (tierKind === 'pro') {
+      return tr4(
+        `≈ ${ratio.toFixed(1)}x $20 Pro 月费`,
+        `≈ ${ratio.toFixed(1)}x $20 Pro 月費`,
+        `≈ ${ratio.toFixed(1)}x $20 Pro/mo`,
+        `≈ ${ratio.toFixed(1)}x $20 Pro/мес`
+      );
+    }
+  }
+  if (tierKind === 'free') {
+    return tr('Free 档 · 参考 API 单价', 'Free tier · API reference');
+  }
+  return tr('参考 API 公开单价', 'Est. via public API pricing');
+}
+
 function renderUsageTab(usage: UsageHistoryDTO | null): string {
   if (!usage) {
     return `<div class="card empty-box">${tr('正在加载本地会话用量归档…', 'Loading local session usage archives…')}</div>`;
@@ -758,12 +1077,31 @@ function renderUsageTab(usage: UsageHistoryDTO | null): string {
     totalTokens: 0,
     requestCount: 0,
     estimatedCostUSD: 0,
+    cacheSavingsUSD: 0,
   };
   const models = usage.modelSummariesByPeriod[period] ?? [];
+  const projects = usage.projectSummariesByPeriod?.[period] ?? [];
+  const sessions = usage.sessionSummariesByPeriod?.[period] ?? [];
+
   const promptTotal = total.inputTokens + total.cacheReadTokens;
   const cacheRate = promptTotal > 0 ? Math.round((total.cacheReadTokens / promptTotal) * 100) : 0;
-  const subMonthly = usage.proSubscriptionMonthlyUSD || 20;
-  const subRatio = total.estimatedCostUSD / subMonthly;
+  const cacheBaseSub = tr4(
+    `命中 ${compactTokens(total.cacheReadTokens)}`,
+    `命中 ${compactTokens(total.cacheReadTokens)}`,
+    `Cached ${compactTokens(total.cacheReadTokens)}`,
+    `Кэш ${compactTokens(total.cacheReadTokens)}`
+  );
+  const cacheSaved = total.cacheSavingsUSD ?? 0;
+  const cacheSub = cacheSaved >= 0.005
+    ? tr4(
+        `${cacheBaseSub} · 省 ${formatUSD(cacheSaved)}`,
+        `${cacheBaseSub} · 省 ${formatUSD(cacheSaved)}`,
+        `${cacheBaseSub} · Saved ${formatUSD(cacheSaved)}`,
+        `${cacheBaseSub} · Эк. ${formatUSD(cacheSaved)}`
+      )
+    : cacheBaseSub;
+
+  const costSub = resolveTierCostSubtitle(usage, total.estimatedCostUSD);
 
   const weeks = usage.heatmapWeeks ?? [];
   let selectedCell: HeatmapCellDTO | null = null;
@@ -786,6 +1124,17 @@ function renderUsageTab(usage: UsageHistoryDTO | null): string {
   const periodLabels = getPeriodLabels();
   const periodLabel = periodLabels.find((p) => p.key === period)?.label ?? period;
 
+  const cliCount = usage.cliArchiveCount ?? 0;
+  const deskCount = usage.desktopArchiveCount ?? usage.scannedFilesCount;
+  const archiveLabel = cliCount > 0
+    ? `App ${deskCount} · CLI ${cliCount}`
+    : tr4(
+        `已扫描 ${usage.scannedFilesCount} 个本地会话归档`,
+        `已掃描 ${usage.scannedFilesCount} 個本機工作階段歸檔`,
+        `${usage.scannedFilesCount} local archives scanned`,
+        `Просканировано архивов: ${usage.scannedFilesCount}`
+      );
+
   const heatmapCollapsed = state.collapsedCards.has('heatmap');
   const dailyCollapsed = state.collapsedCards.has('daily');
   const modelsCollapsed = state.collapsedCards.has('models');
@@ -796,12 +1145,7 @@ function renderUsageTab(usage: UsageHistoryDTO | null): string {
         <div class="segmented">
           ${periodLabels.map((p) => `<button type="button" data-action="period" data-period="${p.key}" class="${period === p.key ? 'active' : ''}">${p.label}</button>`).join('')}
         </div>
-        <span class="muted">${tr4(
-          `已扫描 ${usage.scannedFilesCount} 个本地会话归档`,
-          `已掃描 ${usage.scannedFilesCount} 個本機工作階段歸檔`,
-          `${usage.scannedFilesCount} local archives scanned`,
-          `Просканировано архивов: ${usage.scannedFilesCount}`
-        )}</span>
+        <span class="muted">${archiveLabel}</span>
       </div>
 
       <div class="kpi-grid">
@@ -818,12 +1162,7 @@ function renderUsageTab(usage: UsageHistoryDTO | null): string {
         <div class="kpi-card">
           <div class="kpi-title">${tr('缓存命中率', 'Cache Hit Rate')}</div>
           <div class="kpi-value">${cacheRate}%</div>
-          <div class="kpi-sub">${tr4(
-            `命中 ${compactTokens(total.cacheReadTokens)}`,
-            `命中 ${compactTokens(total.cacheReadTokens)}`,
-            `Cached ${compactTokens(total.cacheReadTokens)}`,
-            `Кэш ${compactTokens(total.cacheReadTokens)}`
-          )}</div>
+          <div class="kpi-sub">${cacheSub}</div>
         </div>
         <div class="kpi-card">
           <div class="kpi-title">${tr('模型调用次数', 'Model Calls')}</div>
@@ -838,12 +1177,7 @@ function renderUsageTab(usage: UsageHistoryDTO | null): string {
         <div class="kpi-card">
           <div class="kpi-title">${tr('估算 API 账单', 'Est. API Cost')}</div>
           <div class="kpi-value">${formatUSD(total.estimatedCostUSD)}</div>
-          <div class="kpi-sub">${tr4(
-            `≈ ${subRatio.toFixed(1)}x $20 Pro 月费`,
-            `≈ ${subRatio.toFixed(1)}x $20 Pro 月費`,
-            `≈ ${subRatio.toFixed(1)}x $20 Pro/mo`,
-            `≈ ${subRatio.toFixed(1)}x $20 Pro/мес`
-          )}</div>
+          <div class="kpi-sub">${costSub}</div>
         </div>
       </div>
 
@@ -920,17 +1254,32 @@ function renderUsageTab(usage: UsageHistoryDTO | null): string {
         <div class="card-header collapsible-header" data-collapse-card="models">
           <div class="card-title-group">
             ${collapseChevron('models', modelsCollapsed)}
-            <h3 class="card-title">${tr4(
-              `按模型用量与预估费用（${periodLabel}）`,
-              `按模型用量與預估費用（${periodLabel}）`,
-              `Usage & Est. Cost by Model (${periodLabel})`,
-              `По моделям (${periodLabel})`
-            )}</h3>
+            <div class="segmented" style="margin-left:2px;">
+              <button type="button" data-action="breakdown-dim" data-dim="model" class="${state.breakdownDim === 'model' ? 'active' : ''}">${tr('按模型', 'By Model')}</button>
+              <button type="button" data-action="breakdown-dim" data-dim="project" class="${state.breakdownDim === 'project' ? 'active' : ''}">${tr('按项目', 'By Project')}</button>
+              <button type="button" data-action="breakdown-dim" data-dim="session" class="${state.breakdownDim === 'session' ? 'active' : ''}">${tr('按会话', 'By Session')}</button>
+            </div>
           </div>
           <span class="muted">${tr('参考 API 定价估算，非实际扣费', 'Estimated via API pricing, not actual billing')}</span>
         </div>
         <div class="card-body">
-          ${renderModelBreakdown(models)}
+          ${state.breakdownDim === 'model'
+            ? renderDonutBreakdown(models.map((m) => ({
+                key: m.modelKey,
+                displayName: m.displayName,
+                totalTokens: m.totalTokens,
+                estimatedCostUSD: m.estimatedCostUSD,
+              })))
+            : state.breakdownDim === 'project'
+              ? renderDonutBreakdown(projects.map((p) => ({
+                  key: p.projectKey,
+                  displayName: p.projectKey === '__unassigned__'
+                    ? tr4('未绑定工作区', '未綁定工作區', 'Unassigned Workspace', 'Без проекта')
+                    : p.displayName,
+                  totalTokens: p.totalTokens,
+                  estimatedCostUSD: p.estimatedCostUSD,
+                })))
+              : renderSessionBreakdown(sessions)}
         </div>
       </div>
     </div>
@@ -983,30 +1332,33 @@ function renderDailyChart(recent: DailyBucketDTO[]): string {
   `;
 }
 
-function renderModelBreakdown(models: ModelUsageDTO[]): string {
-  if (models.length === 0) {
+interface DonutItem {
+  key: string;
+  displayName: string;
+  totalTokens: number;
+  estimatedCostUSD: number;
+}
+
+function renderDonutBreakdown(items: DonutItem[]): string {
+  if (items.length === 0) {
     return `<div class="muted">${tr('所选周期暂无模型调用记录。', 'No model usage recorded in this period.')}</div>`;
   }
 
-  let displayed: ModelUsageDTO[];
-  if (models.length <= 6) {
-    displayed = models;
+  let displayed: DonutItem[];
+  if (items.length <= 6) {
+    displayed = items;
   } else {
-    const top5 = models.slice(0, 5);
-    const rest = models.slice(5);
-    const others: ModelUsageDTO = {
-      modelKey: '__others__',
+    const top5 = items.slice(0, 5);
+    const rest = items.slice(5);
+    const others: DonutItem = {
+      key: '__others__',
       displayName: tr4(
         `其他 (${rest.length})`,
         `其他 (${rest.length})`,
         `Others (${rest.length})`,
         `Прочие (${rest.length})`
       ),
-      inputTokens: rest.reduce((acc, m) => acc + m.inputTokens, 0),
-      cacheReadTokens: rest.reduce((acc, m) => acc + m.cacheReadTokens, 0),
-      outputTokens: rest.reduce((acc, m) => acc + m.outputTokens, 0),
       totalTokens: rest.reduce((acc, m) => acc + m.totalTokens, 0),
-      requestCount: rest.reduce((acc, m) => acc + m.requestCount, 0),
       estimatedCostUSD: rest.reduce((acc, m) => acc + m.estimatedCostUSD, 0),
     };
     displayed = [...top5, others];
@@ -1052,6 +1404,37 @@ function renderModelBreakdown(models: ModelUsageDTO[]): string {
   `;
 }
 
+function renderSessionBreakdown(sessions: SessionUsageDTO[]): string {
+  if (sessions.length === 0) {
+    return `<div class="muted">${tr('所选周期暂无会话调用记录。', 'No session usage recorded in this period.')}</div>`;
+  }
+  const top = sessions.slice(0, 20);
+  const maxTokens = Math.max(1, ...top.map((s) => s.totalTokens));
+
+  return `
+    <div class="session-rows">
+      ${top.map((s, idx) => {
+        const pct = Math.max(2, (s.totalTokens / maxTokens) * 100);
+        const color = PALETTE[idx % PALETTE.length];
+        return `
+          <div class="session-row">
+            <span class="model-name" title="${escapeHtml(s.title)}">${escapeHtml(s.title)}</span>
+            <span class="session-row-tags">
+              ${s.projectName ? `<span class="tag-badge">${escapeHtml(s.projectName)}</span>` : ''}
+              ${s.clientSource === 'cli' ? `<span class="tag-badge cli">CLI</span>` : ''}
+            </span>
+            <div class="linear-track">
+              <div class="linear-fill" style="width:${pct.toFixed(1)}%;background:${color}"></div>
+            </div>
+            <span class="model-num mono">${compactTokens(s.totalTokens)}</span>
+            <span class="model-num mono" style="font-weight:600;">${formatUSD(s.estimatedCostUSD)}</span>
+          </div>
+        `;
+      }).join('')}
+    </div>
+  `;
+}
+
 function render() {
   const root = document.getElementById('app');
   if (!root) return;
@@ -1062,7 +1445,7 @@ function render() {
 
   const bodyHtml = state.activeTab === 'monitor'
     ? (state.live
-        ? `<div class="stack">${renderProxyCard(state.live)}${renderContextCard(state.live)}${renderQuotaCard(state.live)}</div>`
+        ? `<div class="stack">${renderProxyCard(state.live)}${renderContextCard(state.live)}${renderQuotaCard(state.live)}${renderStepsCard(state.live)}</div>`
         : `<div class="card empty-box">${tr('正在加载实时监控…', 'Loading live monitor…')}</div>`)
     : renderUsageTab(state.usage);
 
@@ -1155,6 +1538,14 @@ document.addEventListener('click', (e) => {
     }
     return;
   }
+  if (action === 'breakdown-dim' && actionEl?.dataset.dim) {
+    const dim = actionEl.dataset.dim as BreakdownDim;
+    if (dim === 'model' || dim === 'project' || dim === 'session') {
+      state.breakdownDim = dim;
+      render();
+    }
+    return;
+  }
   if (action === 'refresh-all') {
     void refreshLive(true);
     void refreshUsage();
@@ -1169,6 +1560,21 @@ document.addEventListener('click', (e) => {
     render();
     return;
   }
+  if (action === 'toggle-breakdown') {
+    state.breakdownExpanded = !state.breakdownExpanded;
+    render();
+    return;
+  }
+  if (action === 'toggle-steps') {
+    state.stepsExpanded = !state.stepsExpanded;
+    render();
+    return;
+  }
+  if (action === 'show-all-steps') {
+    state.showAllSteps = true;
+    render();
+    return;
+  }
   if (action === 'toggle-pool' && actionEl?.dataset.poolId) {
     const id = actionEl.dataset.poolId;
     if (state.expandedPools.has(id)) state.expandedPools.delete(id);
@@ -1178,10 +1584,13 @@ document.addEventListener('click', (e) => {
   }
   if (action === 'toggle-all-cards') {
     const ids = getActiveTabCardIds();
-    const allCollapsed = ids.length > 0 && ids.every((id) => state.collapsedCards.has(id));
+    const allCollapsed = isAllActiveCardsCollapsed();
     for (const id of ids) {
       if (allCollapsed) state.collapsedCards.delete(id);
       else state.collapsedCards.add(id);
+    }
+    if (hasStepsCard()) {
+      state.stepsExpanded = allCollapsed;
     }
     saveCollapsedCards(state.collapsedCards);
     render();

@@ -4,8 +4,11 @@ import Foundation
 final class MonitorStore: ObservableObject {
     @Published var liveHub: DaemonHubInfo?
     @Published var userProfile: UserProfileInfo?
+    @Published var lastKnownTier: StoredSubscriptionTier?
+    @Published var modelCatalog: [String: ModelCatalogEntry] = [:]
     @Published var quotaPools: [QuotaPoolGroup] = []
     @Published var sessions: [SessionSummary] = []
+    @Published var activeRunningSessionCount: Int = 0
     @Published var pinnedCascadeId: String? = nil
     @Published var selectedCascadeId: String?
     @Published var activeContext: SessionContextSnapshot?
@@ -15,11 +18,18 @@ final class MonitorStore: ObservableObject {
     @Published var lastLiveError: String?
     @Published var lastUpdatedAt: Date?
 
+    private let support: AppSupport
     private let rpcClient = LanguageServerClient()
     nonisolated(unsafe) private var liveTimer: Timer?
     private var lastHistoryScanAt: Date = .distantPast
     private var isInteractiveVisible = true
     private var liveRefreshGeneration = 0
+    private var didInitialModelCatalogSync = false
+
+    init(support: AppSupport = AppSupport()) {
+        self.support = support
+        self.lastKnownTier = StoredSubscriptionTier.load(from: support.lastKnownTierURL)
+    }
 
     deinit {
         liveTimer?.invalidate()
@@ -62,6 +72,7 @@ final class MonitorStore: ObservableObject {
         let generation = liveRefreshGeneration
         let preferredId = pinnedCascadeId
         let currentLang = L10n.current
+        let supportCopy = support
 
         Task { [weak self] in
             guard let self else { return }
@@ -77,6 +88,7 @@ final class MonitorStore: ObservableObject {
                 self.selectedCascadeId = nil
                 self.activeContext = nil
                 self.sessions = []
+                self.activeRunningSessionCount = 0
                 self.quotaPools = []
                 self.lastLiveError = nil
                 self.isRefreshingLive = false
@@ -87,17 +99,27 @@ final class MonitorStore: ObservableObject {
                 async let statusTask = self.rpcClient.fetchUserStatus(hub: hub, lang: currentLang)
                 async let sessionsTask = self.rpcClient.fetchSessions(hub: hub)
 
-                let (profile, pools, labels) = try await statusTask
+                let (profile, pools, labels, catalog) = try await statusTask
                 let sessionList = try await sessionsTask
 
                 let targetSession = preferredId.flatMap { pid in sessionList.first(where: { $0.id == pid }) }
                     ?? sessionList.first
                 let contextSnap: SessionContextSnapshot?
                 if let targetSession {
+                    let pricingSource = await Task.detached(priority: .utility) {
+                        PricingCatalog.ResolvedPricingSource.load(
+                            customPricingURL: supportCopy.customPricingURL,
+                            syncedCatalogURL: supportCopy.syncedPricingCatalogURL,
+                            bundledCatalogURL: PricingCatalog.defaultBundledCatalogURL(),
+                            modelCatalog: catalog
+                        )
+                    }.value
                     contextSnap = try await self.rpcClient.fetchSessionContext(
                         hub: hub,
                         session: targetSession,
-                        modelLabels: labels
+                        modelLabels: labels,
+                        modelCatalog: catalog,
+                        pricingSource: pricingSource
                     )
                 } else {
                     contextSnap = nil
@@ -107,12 +129,24 @@ final class MonitorStore: ObservableObject {
 
                 self.liveHub = hub
                 self.userProfile = profile
+                if let stored = profile?.toStoredTier() {
+                    self.lastKnownTier = stored
+                    Task.detached(priority: .utility) {
+                        StoredSubscriptionTier.save(stored, to: supportCopy.lastKnownTierURL)
+                    }
+                }
+                self.modelCatalog = catalog
                 self.quotaPools = pools
                 self.sessions = sessionList
+                self.activeRunningSessionCount = sessionList.filter(\.isRunning).count
                 self.selectedCascadeId = targetSession?.id
                 self.activeContext = contextSnap
                 self.lastLiveError = nil
                 self.lastUpdatedAt = Date()
+                if !catalog.isEmpty && !self.didInitialModelCatalogSync {
+                    self.didInitialModelCatalogSync = true
+                    self.refreshHistory()
+                }
             } catch {
                 guard self.liveRefreshGeneration == generation else { return }
                 self.liveHub = hub
@@ -128,11 +162,19 @@ final class MonitorStore: ObservableObject {
     func refreshHistory() {
         guard !isRefreshingHistory else { return }
         isRefreshingHistory = true
+        let supportCopy = support
+        let catalogSnap = modelCatalog
+        let sessionsSnap = sessions
 
         Task { [weak self] in
             guard let self else { return }
             let snapshot = await Task.detached(priority: .utility) {
-                TranscriptScanner.scan()
+                TranscriptScanner.scanMultiSource(
+                    cacheURL: supportCopy.usageCacheURL,
+                    support: supportCopy,
+                    modelCatalog: catalogSnap,
+                    liveSessions: sessionsSnap
+                )
             }.value
 
             self.usageHistory = snapshot
@@ -141,12 +183,36 @@ final class MonitorStore: ObservableObject {
         }
     }
 
+    var effectiveSubscriptionTier: (tierKind: SubscriptionTierKind, tierName: String, monthlyReferenceUSD: Double?) {
+        if let profile = userProfile,
+           (profile.tierKind != .unknown || !profile.tierName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) {
+            return (profile.tierKind, profile.tierName, profile.monthlyReferenceUSD)
+        }
+        if let stored = lastKnownTier {
+            return (stored.tierKind, stored.tierName, stored.monthlyReferenceUSD)
+        }
+        return (.unknown, "", nil)
+    }
+
+    var tightestQuotaPool: QuotaPoolGroup? {
+        quotaPools.min { $0.remainingFraction < $1.remainingFraction }
+    }
+
     var primaryQuotaPool: QuotaPoolGroup? {
-        quotaPools.first
+        tightestQuotaPool ?? quotaPools.first
     }
 
     var compactMenuBarText: String? {
         guard liveHub != nil else { return nil }
+        let runningPrefix: String
+        if activeRunningSessionCount > 1 {
+            runningPrefix = "●\(activeRunningSessionCount) · "
+        } else if activeRunningSessionCount == 1 {
+            runningPrefix = "● "
+        } else {
+            runningPrefix = ""
+        }
+
         var parts: [String] = []
         if let ctx = activeContext {
             parts.append(TokenFormatting.compactTokensShort(ctx.activeContextTokens))
@@ -154,7 +220,10 @@ final class MonitorStore: ObservableObject {
         if let quota = primaryQuotaPool {
             parts.append("\(quota.remainingPercent)%")
         }
-        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+        if parts.isEmpty {
+            return activeRunningSessionCount > 0 ? "●\(activeRunningSessionCount)" : nil
+        }
+        return runningPrefix + parts.joined(separator: " · ")
     }
 
     private func rescheduleTimer() {

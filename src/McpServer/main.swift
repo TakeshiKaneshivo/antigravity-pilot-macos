@@ -148,6 +148,7 @@ final class PilotMCPService: MCPServiceHandling, @unchecked Sendable {
         let isoFormatter = Self.makeISOFormatter()
         var out: [String: Any] = [
             "connected": hub != nil,
+            "activeRunningCount": 0,
             "proxyConfig": encodeProxyConfig(config, exists: configExists),
             "proxyHealth": encodeProxyHealth(report),
             "sessions": [] as [[String: Any]],
@@ -170,16 +171,23 @@ final class PilotMCPService: MCPServiceHandling, @unchecked Sendable {
             async let statusTask = rpcClient.fetchUserStatus(hub: hub, lang: lang)
             async let sessionsTask = rpcClient.fetchSessions(hub: hub)
 
-            let (profile, pools, labels) = try await statusTask
+            let (profile, pools, labels, modelCatalog) = try await statusTask
             let sessionList = try await sessionsTask
 
             if let profile {
                 out["userProfile"] = [
                     "name": profile.name,
                     "email": profile.email,
-                    "tierName": profile.tierName
+                    "tierName": profile.tierName,
+                    "tierKind": profile.tierKind.rawValue,
+                    "monthlyReferenceUSD": profile.monthlyReferenceUSD as Any
                 ]
+                if let stored = profile.toStoredTier() {
+                    StoredSubscriptionTier.save(stored, to: support.lastKnownTierURL)
+                }
             }
+
+            out["activeRunningCount"] = sessionList.filter(\.isRunning).count
 
             let targetSession = sessionList.first(where: { $0.id == preferredId }) ?? sessionList.first
             var displayedSessions = Array(sessionList.prefix(20))
@@ -194,32 +202,31 @@ final class PilotMCPService: MCPServiceHandling, @unchecked Sendable {
                     "stepCount": s.stepCount,
                     "status": s.status,
                     "isRunning": s.isRunning,
+                    "workspaceName": s.workspaceName ?? "",
+                    "branchName": s.branchName ?? "",
+                    "parentConversationId": s.parentConversationId ?? "",
+                    "nestingDepth": s.nestingDepth,
+                    "agentRole": s.agentRole ?? "",
                     "lastModifiedISO": s.lastModifiedTime.map { isoFormatter.string(from: $0) } ?? ""
                 ]
             }
 
             if let targetSession {
                 out["selectedCascadeId"] = targetSession.id
-                if let ctx = try await rpcClient.fetchSessionContext(hub: hub, session: targetSession, modelLabels: labels) {
-                    out["activeContext"] = [
-                        "cascadeId": ctx.cascadeId,
-                        "title": ctx.title,
-                        "modelId": ctx.modelId,
-                        "modelDisplayName": ctx.modelDisplayName,
-                        "inputTokens": ctx.inputTokens,
-                        "cacheReadTokens": ctx.cacheReadTokens,
-                        "outputTokens": ctx.outputTokens,
-                        "thinkingOutputTokens": ctx.thinkingOutputTokens,
-                        "responseOutputTokens": ctx.responseOutputTokens,
-                        "activeContextTokens": ctx.activeContextTokens,
-                        "totalTurnTokens": ctx.totalTurnTokens,
-                        "contextLimitTokens": ctx.contextLimitTokens,
-                        "usageFraction": ctx.usageFraction,
-                        "cacheHitRatio": ctx.cacheHitRatio,
-                        "timeToFirstTokenSec": ctx.timeToFirstTokenSec as Any,
-                        "streamingDurationSec": ctx.streamingDurationSec as Any,
-                        "tokensPerSecond": ctx.tokensPerSecond as Any
-                    ]
+                let pricingSource = PricingCatalog.ResolvedPricingSource.load(
+                    customPricingURL: support.customPricingURL,
+                    syncedCatalogURL: support.syncedPricingCatalogURL,
+                    bundledCatalogURL: PricingCatalog.defaultBundledCatalogURL(),
+                    modelCatalog: modelCatalog
+                )
+                if let ctx = try await rpcClient.fetchSessionContext(
+                    hub: hub,
+                    session: targetSession,
+                    modelLabels: labels,
+                    modelCatalog: modelCatalog,
+                    pricingSource: pricingSource
+                ) {
+                    out["activeContext"] = encodeActiveContext(ctx, lang: lang)
                 }
             }
 
@@ -230,6 +237,19 @@ final class PilotMCPService: MCPServiceHandling, @unchecked Sendable {
                     "remainingFraction": pool.remainingFraction,
                     "remainingPercent": pool.remainingPercent,
                     "resetCountdownText": pool.resetCountdownText(lang),
+                    "tightestWindowKind": pool.tightestWindowKind.rawValue,
+                    "buckets": pool.buckets.map { b in
+                        [
+                            "id": b.id,
+                            "windowKind": b.windowKind.rawValue,
+                            "windowLabel": b.windowKind.shortLabel(lang),
+                            "displayName": b.displayName,
+                            "remainingFraction": b.remainingFraction,
+                            "remainingPercent": b.remainingPercent,
+                            "resetCountdownText": b.resetCountdownText(lang),
+                            "shortCountdownText": b.shortCountdownText(lang)
+                        ]
+                    },
                     "models": pool.models.map { m in
                         [
                             "id": m.id,
@@ -248,13 +268,71 @@ final class PilotMCPService: MCPServiceHandling, @unchecked Sendable {
         return out
     }
 
+    private func encodeActiveContext(_ ctx: SessionContextSnapshot, lang: AppLanguage) -> [String: Any] {
+        [
+            "cascadeId": ctx.cascadeId,
+            "title": ctx.title,
+            "modelId": ctx.modelId,
+            "modelDisplayName": ctx.modelDisplayName,
+            "inputTokens": ctx.inputTokens,
+            "cacheReadTokens": ctx.cacheReadTokens,
+            "outputTokens": ctx.outputTokens,
+            "thinkingOutputTokens": ctx.thinkingOutputTokens,
+            "responseOutputTokens": ctx.responseOutputTokens,
+            "activeContextTokens": ctx.activeContextTokens,
+            "totalTurnTokens": ctx.totalTurnTokens,
+            "contextLimitTokens": ctx.contextLimitTokens,
+            "usageFraction": ctx.usageFraction,
+            "cacheHitRatio": ctx.cacheHitRatio,
+            "timeToFirstTokenSec": ctx.timeToFirstTokenSec as Any,
+            "streamingDurationSec": ctx.streamingDurationSec as Any,
+            "tokensPerSecond": ctx.tokensPerSecond as Any,
+            "sessionStepCount": ctx.sessionStepCount,
+            "sessionAvgTokensPerSecond": ctx.sessionAvgTokensPerSecond as Any,
+            "sessionAvgTTFTSec": ctx.sessionAvgTTFTSec as Any,
+            "sessionTotalCostUSD": ctx.sessionTotalCostUSD,
+            "anomalyStepCount": ctx.anomalyStepCount,
+            "contextBreakdown": ctx.contextBreakdown.map { item in
+                [
+                    "category": item.category.rawValue,
+                    "label": item.category.localizedTitle(lang),
+                    "colorIndex": item.category.colorIndex,
+                    "tokens": item.tokens,
+                    "fraction": item.fraction
+                ]
+            },
+            "recentSteps": ctx.recentSteps.map { step in
+                [
+                    "stepNumber": step.stepNumber,
+                    "modelId": step.modelId,
+                    "modelDisplayName": step.modelDisplayName,
+                    "activeContextTokens": step.activeContextTokens,
+                    "outputTokens": step.outputTokens,
+                    "thinkingOutputTokens": step.thinkingOutputTokens,
+                    "responseOutputTokens": step.responseOutputTokens,
+                    "timeToFirstTokenSec": step.timeToFirstTokenSec as Any,
+                    "tokensPerSecond": step.tokensPerSecond as Any,
+                    "estimatedCostUSD": step.estimatedCostUSD,
+                    "isCompactionStep": step.isCompactionStep,
+                    "retryCount": step.retryCount,
+                    "anomalyKind": step.anomalyKind?.rawValue as Any,
+                    "anomalyLabel": step.anomalyKind?.localizedLabel(lang) as Any,
+                    "anomalyExcerpt": step.anomalyExcerpt as Any
+                ]
+            }
+        ]
+    }
+
     private func buildUsageHistoryAsync() async -> [String: Any] {
         await Task.detached(priority: .utility) { [support] in
-            let snapshot = TranscriptScanner.scan(
+            let snapshot = TranscriptScanner.scanMultiSource(
                 cacheURL: support.usageCacheURL,
-                customPricingURL: support.customPricingURL
+                support: support,
+                modelCatalog: [:],
+                liveSessions: []
             )
-            return Self.encodeUsageHistory(snapshot)
+            let storedTier = StoredSubscriptionTier.load(from: support.lastKnownTierURL)
+            return Self.encodeUsageHistory(snapshot, storedTier: storedTier)
         }.value
     }
 
@@ -268,8 +346,8 @@ final class PilotMCPService: MCPServiceHandling, @unchecked Sendable {
             "hookProxyURL": config.hookProxyURL,
             "envProxyURL": config.envProxyURL,
             "noProxy": config.effectiveNoProxy,
-            "runtimeIconStyle": config.runtimeIconStyle.rawValue,
             "useOriginalIcon": config.useOriginalIcon,
+            "runtimeIconStyle": config.runtimeIconStyle.rawValue,
             "appLanguage": config.appLanguage.rawValue,
             "resolvedLanguage": config.appLanguage.resolved.rawValue
         ]
@@ -297,20 +375,22 @@ final class PilotMCPService: MCPServiceHandling, @unchecked Sendable {
         ]
     }
 
-    private static func encodeUsageHistory(_ snapshot: UsageHistorySnapshot) -> [String: Any] {
+    private static func encodeUsageHistory(_ snapshot: UsageHistorySnapshot, storedTier: StoredSubscriptionTier?) -> [String: Any] {
         let recent14 = Array(snapshot.dailyBuckets.suffix(14)).map(encodeDailyBucket)
         let heatmapWeeks = buildHeatmapMatrix(buckets: snapshot.dailyBuckets, weeksCount: 52)
 
         var totalsDict: [String: Any] = [:]
         var modelsDict: [String: Any] = [:]
+        var projectsDict: [String: Any] = [:]
+        var sessionsDict: [String: Any] = [:]
 
         for period in UsagePeriod.allCases {
             let key = periodJSONKey(period)
             let bucket = snapshot.totalsByPeriod[period]
-                ?? DailyUsageBucket(dateKey: "", inputTokens: 0, cacheReadTokens: 0, outputTokens: 0, requestCount: 0, estimatedCostUSD: 0)
+                ?? DailyUsageBucket(dateKey: "", inputTokens: 0, cacheReadTokens: 0, outputTokens: 0, requestCount: 0, estimatedCostUSD: 0, cacheSavingsUSD: 0)
             totalsDict[key] = encodeDailyBucket(bucket)
 
-            let models = (snapshot.modelSummariesByPeriod[period] ?? []).map { m in
+            modelsDict[key] = (snapshot.modelSummariesByPeriod[period] ?? []).map { m in
                 [
                     "modelKey": m.modelKey,
                     "displayName": m.displayName,
@@ -319,19 +399,62 @@ final class PilotMCPService: MCPServiceHandling, @unchecked Sendable {
                     "outputTokens": m.outputTokens,
                     "totalTokens": m.totalTokens,
                     "requestCount": m.requestCount,
-                    "estimatedCostUSD": m.estimatedCostUSD
+                    "estimatedCostUSD": m.estimatedCostUSD,
+                    "cacheSavingsUSD": m.cacheSavingsUSD
                 ] as [String: Any]
             }
-            modelsDict[key] = models
+
+            projectsDict[key] = (snapshot.projectSummariesByPeriod[period] ?? []).map { p in
+                [
+                    "projectKey": p.projectKey,
+                    "displayName": p.displayName,
+                    "inputTokens": p.inputTokens,
+                    "cacheReadTokens": p.cacheReadTokens,
+                    "outputTokens": p.outputTokens,
+                    "totalTokens": p.totalTokens,
+                    "requestCount": p.requestCount,
+                    "sessionCount": p.sessionCount,
+                    "estimatedCostUSD": p.estimatedCostUSD,
+                    "cacheSavingsUSD": p.cacheSavingsUSD
+                ] as [String: Any]
+            }
+
+            sessionsDict[key] = (snapshot.sessionSummariesByPeriod[period] ?? []).map { s in
+                [
+                    "cascadeId": s.cascadeId,
+                    "title": s.title,
+                    "projectName": s.projectName ?? "",
+                    "clientSource": s.clientSource.rawValue,
+                    "inputTokens": s.inputTokens,
+                    "cacheReadTokens": s.cacheReadTokens,
+                    "outputTokens": s.outputTokens,
+                    "totalTokens": s.totalTokens,
+                    "requestCount": s.requestCount,
+                    "estimatedCostUSD": s.estimatedCostUSD,
+                    "cacheSavingsUSD": s.cacheSavingsUSD,
+                    "lastDateKey": s.lastDateKey
+                ] as [String: Any]
+            }
         }
+
+        let tierObj: [String: Any] = [
+            "tierKind": (storedTier?.tierKind ?? .unknown).rawValue,
+            "tierName": storedTier?.tierName ?? "",
+            "monthlyReferenceUSD": storedTier?.monthlyReferenceUSD as Any
+        ]
 
         return [
             "recent14Days": recent14,
             "heatmapWeeks": heatmapWeeks,
             "totalsByPeriod": totalsDict,
             "modelSummariesByPeriod": modelsDict,
-            "proSubscriptionMonthlyUSD": PricingCatalog.proSubscriptionMonthlyUSD,
+            "projectSummariesByPeriod": projectsDict,
+            "sessionSummariesByPeriod": sessionsDict,
+            "subscriptionTier": tierObj,
+            "proSubscriptionMonthlyUSD": storedTier?.monthlyReferenceUSD ?? PricingCatalog.proSubscriptionMonthlyUSD,
             "scannedFilesCount": snapshot.scannedFilesCount,
+            "desktopArchiveCount": snapshot.desktopArchiveCount,
+            "cliArchiveCount": snapshot.cliArchiveCount,
             "scannedAtISO": makeISOFormatter().string(from: snapshot.scannedAt)
         ]
     }
@@ -344,7 +467,8 @@ final class PilotMCPService: MCPServiceHandling, @unchecked Sendable {
             "outputTokens": b.outputTokens,
             "totalTokens": b.totalTokens,
             "requestCount": b.requestCount,
-            "estimatedCostUSD": b.estimatedCostUSD
+            "estimatedCostUSD": b.estimatedCostUSD,
+            "cacheSavingsUSD": b.cacheSavingsUSD
         ]
     }
 

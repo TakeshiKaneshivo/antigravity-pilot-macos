@@ -267,24 +267,54 @@ struct MenuBarPopoverView: View {
             ForEach(pools) { pool in
                 let tint: Color = pool.remainingPercent <= 15 ? .red : (pool.remainingPercent <= 35 ? .orange : .green)
                 VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 6) {
+                    if pool.buckets.count >= 2 {
                         Text(pool.title)
                             .font(.caption2.weight(.medium))
                             .foregroundStyle(.primary)
                             .lineLimit(1)
-                        Spacer(minLength: 4)
-                        Text(pool.resetCountdownText(lang))
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-                    HStack(spacing: 8) {
-                        PilotLinearBar(fraction: pool.remainingFraction, tint: tint, height: 5)
-                        Text("\(pool.remainingPercent)%")
-                            .font(.system(.caption, design: .rounded).weight(.bold))
-                            .monospacedDigit()
-                            .foregroundStyle(tint)
-                            .frame(width: 34, alignment: .trailing)
+                        HStack(spacing: 8) {
+                            ForEach(pool.buckets.prefix(2)) { bucket in
+                                let bTint: Color = bucket.remainingPercent <= 15 ? .red : (bucket.remainingPercent <= 35 ? .orange : .green)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    HStack(spacing: 3) {
+                                        Text(bucket.windowKind.popoverLabel(lang))
+                                            .font(.system(size: 10, weight: .semibold))
+                                            .foregroundStyle(.secondary)
+                                        Text(bucket.shortCountdownText(lang))
+                                            .font(.system(size: 9.5))
+                                            .foregroundStyle(.tertiary)
+                                            .lineLimit(1)
+                                        Spacer(minLength: 2)
+                                        Text("\(bucket.remainingPercent)%")
+                                            .font(.system(size: 10.5, design: .rounded).weight(.bold))
+                                            .monospacedDigit()
+                                            .foregroundStyle(bTint)
+                                    }
+                                    PilotLinearBar(fraction: bucket.remainingFraction, tint: bTint, height: 4.5)
+                                }
+                                .frame(maxWidth: .infinity)
+                            }
+                        }
+                    } else {
+                        HStack(spacing: 6) {
+                            Text(pool.title)
+                                .font(.caption2.weight(.medium))
+                                .foregroundStyle(.primary)
+                                .lineLimit(1)
+                            Spacer(minLength: 4)
+                            Text(pool.resetCountdownText(lang))
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                        HStack(spacing: 8) {
+                            PilotLinearBar(fraction: pool.remainingFraction, tint: tint, height: 5)
+                            Text("\(pool.remainingPercent)%")
+                                .font(.system(.caption, design: .rounded).weight(.bold))
+                                .monospacedDigit()
+                                .foregroundStyle(tint)
+                                .frame(width: 34, alignment: .trailing)
+                        }
                     }
                 }
             }

@@ -893,4 +893,11 @@ enum PilotMorandiPalette {
     static func kpiCache(colorScheme: ColorScheme) -> Color { chartSeries(colorScheme: colorScheme)[5] }
     static func kpiCalls(colorScheme: ColorScheme) -> Color { chartSeries(colorScheme: colorScheme)[3] }
     static func kpiCost(colorScheme: ColorScheme) -> Color { chartSeries(colorScheme: colorScheme)[1] }
+
+    static func contextBreakdownColors(colorScheme: ColorScheme) -> [Color] {
+        let values: [UInt32] = colorScheme == .dark
+            ? [0x8AA3BC, 0x9CB39E, 0xD4B096, 0xB5A2BA, 0xD1A1A6, 0x91B3B5, 0xC9B88C, 0x9CA6B8, 0xB59B92, 0x8F9BA0]
+            : [0x748DA6, 0x8CA38E, 0xC9A286, 0xA38FA8, 0xC28F94, 0x7EA1A3, 0xB5A375, 0x848FA3, 0xA1867D, 0x7A868B]
+        return values.map(hex)
+    }
 }

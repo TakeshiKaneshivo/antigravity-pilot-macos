@@ -135,18 +135,27 @@ def main() -> int:
             if tool_name == "open_pilot_monitor":
                 assert sc["initialTab"] == "monitor"
                 assert "proxyHealth" in sc["live"]
+                assert "activeRunningCount" in sc["live"]
                 assert len(sc["usage"]["heatmapWeeks"]) == 52
+                assert "projectSummariesByPeriod" in sc["usage"]
+                assert "sessionSummariesByPeriod" in sc["usage"]
             elif tool_name == "open_pilot_usage":
                 assert sc["initialTab"] == "usage"
                 assert sc["initialPeriod"] == "days7"
                 assert len(sc["usage"]["heatmapWeeks"]) == 52
+                assert "desktopArchiveCount" in sc["usage"]
+                assert "cliArchiveCount" in sc["usage"]
             elif tool_name == "pilot_get_live_snapshot":
                 assert "proxyConfig" in sc and "proxyHealth" in sc
+                assert "activeRunningCount" in sc
             elif tool_name == "pilot_probe_proxy":
                 assert "proxyHealth" in sc
             elif tool_name == "pilot_get_usage_history":
                 assert len(sc["heatmapWeeks"]) == 52
                 assert len(sc["heatmapWeeks"][0]) == 7
+                assert "projectSummariesByPeriod" in sc
+                assert "sessionSummariesByPeriod" in sc
+                assert "subscriptionTier" in sc
 
             print(f"[PASS] tools/call {tool_name} succeeded ({sc_bytes} bytes)")
 

@@ -120,6 +120,8 @@ struct ProxyConfigView: View {
                     ))
                     .frame(width: 44 + PilotIconCache.margin * 2, height: 44 + PilotIconCache.margin * 2)
                     .padding(-PilotIconCache.margin)
+                    .id(appModel.config.runtimeIconStyle)
+                    .animation(.easeInOut(duration: 0.15), value: appModel.config.runtimeIconStyle)
 
                     VStack(alignment: .leading, spacing: 3) {
                         HStack(spacing: 8) {

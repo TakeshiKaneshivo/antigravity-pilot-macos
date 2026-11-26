@@ -59,6 +59,18 @@ struct AppSupport {
         root.appendingPathComponent("custom_pricing.json")
     }
 
+    var syncedPricingCatalogURL: URL {
+        root.appendingPathComponent("synced_pricing_catalog.json")
+    }
+
+    var pricingSyncStateURL: URL {
+        root.appendingPathComponent("pricing_sync_state.json")
+    }
+
+    var lastKnownTierURL: URL {
+        root.appendingPathComponent("last_known_tier.json")
+    }
+
     var updatesDirectory: URL {
         root.appendingPathComponent("Updates", isDirectory: true)
     }

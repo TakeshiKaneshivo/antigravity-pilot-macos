@@ -66,9 +66,14 @@ struct McpPluginInstaller {
             guard let bundledLogo = assets.logoPNG else { return true }
             return sha256File(bundledLogo) == sha256File(logoDest)
         }()
+        let pricingDest = pluginDir.appendingPathComponent("assets/pricing-catalog.json")
+        let pricingMatches: Bool = {
+            guard let bundledPricing = assets.pricingCatalog else { return true }
+            return sha256File(bundledPricing) == sha256File(pricingDest)
+        }()
         let configMatches = (try? Data(contentsOf: mcpConfig)) == (try? expectedMCPConfigData(appVersion: bundledVersion))
 
-        if binMatches && htmlMatches && logoMatches && configMatches && installedVersion == bundledVersion {
+        if binMatches && htmlMatches && logoMatches && pricingMatches && configMatches && installedVersion == bundledVersion {
             return .installedCurrent(version: installedVersion)
         }
         return .updateAvailable(installedVersion: installedVersion, bundledVersion: bundledVersion)
@@ -92,6 +97,9 @@ struct McpPluginInstaller {
         try fm.setAttributes([.posixPermissions: NSNumber(value: Int16(0o755))], ofItemAtPath: binDest.path)
 
         try fm.copyItem(at: assets.dashboardHTML, to: assetsDir.appendingPathComponent("dashboard.html"))
+        if let pricing = assets.pricingCatalog {
+            try fm.copyItem(at: pricing, to: assetsDir.appendingPathComponent("pricing-catalog.json"))
+        }
         if let logo = assets.logoPNG {
             try fm.copyItem(at: logo, to: assetsDir.appendingPathComponent("logo.png"))
         }
@@ -209,7 +217,7 @@ struct McpPluginInstaller {
         return data
     }
 
-    private func resolveBundledAssets() throws -> (mcpBinary: URL, dashboardHTML: URL, logoPNG: URL?) {
+    private func resolveBundledAssets() throws -> (mcpBinary: URL, dashboardHTML: URL, logoPNG: URL?, pricingCatalog: URL?) {
         guard let base = resourceBaseURL else {
             throw BuilderError.missingResource("Bundle.main.resourceURL")
         }
@@ -217,6 +225,7 @@ struct McpPluginInstaller {
         let mcpBinary = base.appendingPathComponent("antigravity-pilot-mcp")
         let dashboardHTML = base.appendingPathComponent("pilot-mcp-dashboard.html")
         let logoPNG = base.appendingPathComponent("icon.png")
+        let pricingCatalog = base.appendingPathComponent("pricing-catalog.json")
 
         guard fm.fileExists(atPath: mcpBinary.path) else {
             throw BuilderError.missingResource("antigravity-pilot-mcp")
@@ -227,7 +236,8 @@ struct McpPluginInstaller {
         return (
             mcpBinary: mcpBinary,
             dashboardHTML: dashboardHTML,
-            logoPNG: fm.fileExists(atPath: logoPNG.path) ? logoPNG : nil
+            logoPNG: fm.fileExists(atPath: logoPNG.path) ? logoPNG : nil,
+            pricingCatalog: fm.fileExists(atPath: pricingCatalog.path) ? pricingCatalog : nil
         )
     }
 

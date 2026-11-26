@@ -1,12 +1,39 @@
 import Charts
 import SwiftUI
 
+enum UsageBreakdownDimension: String, CaseIterable, Identifiable {
+    case model
+    case project
+    case session
+
+    var id: String { rawValue }
+
+    func localizedTitle(_ lang: AppLanguage) -> String {
+        switch self {
+        case .model:
+            return L10n.t(zhHans: "按模型", zhHant: "按模型", en: "By Model", ru: "Модели", lang)
+        case .project:
+            return L10n.t(zhHans: "按项目", zhHant: "按專案", en: "By Project", ru: "Проекты", lang)
+        case .session:
+            return L10n.t(zhHans: "按会话", zhHant: "按工作階段", en: "By Session", ru: "Сессии", lang)
+        }
+    }
+}
+
+private struct BreakdownChartEntry: Identifiable {
+    let id: String
+    let displayName: String
+    let totalTokens: Int
+    let estimatedCostUSD: Double
+}
+
 struct UsageHeatmapView: View {
     @Environment(\.appLanguage) private var lang
     @Environment(\.colorScheme) private var colorScheme
     @ObservedObject var monitorStore: MonitorStore
 
     @State private var selectedPeriod: UsagePeriod = .days30
+    @State private var breakdownDimension: UsageBreakdownDimension = .model
     @State private var selectedDateKey: String?
     @State private var chartHoverDateKey: String?
 
@@ -27,7 +54,7 @@ struct UsageHeatmapView: View {
             }
             .frame(height: 168)
 
-            modelBreakdownCard
+            breakdownCard
                 .frame(maxHeight: .infinity)
         }
         .padding(.horizontal, 18)
@@ -37,20 +64,50 @@ struct UsageHeatmapView: View {
 
     private var currentTotal: DailyUsageBucket {
         monitorStore.usageHistory.totalsByPeriod[selectedPeriod]
-            ?? DailyUsageBucket(dateKey: "", inputTokens: 0, cacheReadTokens: 0, outputTokens: 0, requestCount: 0, estimatedCostUSD: 0)
+            ?? DailyUsageBucket(dateKey: "", inputTokens: 0, cacheReadTokens: 0, outputTokens: 0, requestCount: 0, estimatedCostUSD: 0, cacheSavingsUSD: 0)
     }
 
     private var currentModels: [ModelUsageSummary] {
         monitorStore.usageHistory.modelSummariesByPeriod[selectedPeriod] ?? []
     }
 
-    private var displayedModels: [ModelUsageSummary] {
-        let models = currentModels
-        guard models.count > 6 else { return models }
-        let top5 = Array(models.prefix(5))
-        let rest = models.dropFirst(5)
-        let others = ModelUsageSummary(
-            modelKey: "__others__",
+    private var currentProjects: [ProjectUsageSummary] {
+        monitorStore.usageHistory.projectSummariesByPeriod[selectedPeriod] ?? []
+    }
+
+    private var currentSessions: [SessionUsageSummary] {
+        monitorStore.usageHistory.sessionSummariesByPeriod[selectedPeriod] ?? []
+    }
+
+    private var displayedModelEntries: [BreakdownChartEntry] {
+        let items = currentModels.map {
+            BreakdownChartEntry(id: $0.modelKey, displayName: $0.displayName, totalTokens: $0.totalTokens, estimatedCostUSD: $0.estimatedCostUSD)
+        }
+        return collapseTop5(items)
+    }
+
+    private var displayedProjectEntries: [BreakdownChartEntry] {
+        let items = currentProjects.map { p in
+            let name = p.projectKey == "__unassigned__"
+                ? L10n.t(
+                    zhHans: "未绑定工作区",
+                    zhHant: "未綁定工作區",
+                    en: "Unassigned Workspace",
+                    ru: "Без проекта",
+                    lang
+                )
+                : p.displayName
+            return BreakdownChartEntry(id: p.projectKey, displayName: name, totalTokens: p.totalTokens, estimatedCostUSD: p.estimatedCostUSD)
+        }
+        return collapseTop5(items)
+    }
+
+    private func collapseTop5(_ items: [BreakdownChartEntry]) -> [BreakdownChartEntry] {
+        guard items.count > 6 else { return items }
+        let top5 = Array(items.prefix(5))
+        let rest = items.dropFirst(5)
+        let others = BreakdownChartEntry(
+            id: "__others__",
             displayName: L10n.t(
                 zhHans: "其他 (\(rest.count))",
                 zhHant: "其他 (\(rest.count))",
@@ -58,17 +115,28 @@ struct UsageHeatmapView: View {
                 ru: "Прочие (\(rest.count))",
                 lang
             ),
-            inputTokens: rest.reduce(0) { $0 + $1.inputTokens },
-            cacheReadTokens: rest.reduce(0) { $0 + $1.cacheReadTokens },
-            outputTokens: rest.reduce(0) { $0 + $1.outputTokens },
-            requestCount: rest.reduce(0) { $0 + $1.requestCount },
+            totalTokens: rest.reduce(0) { $0 + $1.totalTokens },
             estimatedCostUSD: rest.reduce(0) { $0 + $1.estimatedCostUSD }
         )
         return top5 + [others]
     }
 
     private var headerControls: some View {
-        HStack(spacing: 8) {
+        let hist = monitorStore.usageHistory
+        let archiveText: String = {
+            if hist.cliArchiveCount > 0 {
+                return "App \(hist.desktopArchiveCount) · CLI \(hist.cliArchiveCount)"
+            }
+            return L10n.t(
+                zhHans: "已扫描 \(hist.scannedFilesCount) 个归档",
+                zhHant: "已掃描 \(hist.scannedFilesCount) 個歸檔",
+                en: "\(hist.scannedFilesCount) archives scanned",
+                ru: "Логи: \(hist.scannedFilesCount)",
+                lang
+            )
+        }()
+
+        return HStack(spacing: 8) {
             Picker("", selection: $selectedPeriod) {
                 ForEach(UsagePeriod.allCases) { period in
                     Text(period.localizedTitle(lang)).tag(period)
@@ -81,13 +149,7 @@ struct UsageHeatmapView: View {
             Spacer()
 
             PilotStatusPill(
-                text: L10n.t(
-                    zhHans: "已扫描 \(monitorStore.usageHistory.scannedFilesCount) 个归档",
-                    zhHant: "已掃描 \(monitorStore.usageHistory.scannedFilesCount) 個歸檔",
-                    en: "\(monitorStore.usageHistory.scannedFilesCount) archives scanned",
-                    ru: "Логи: \(monitorStore.usageHistory.scannedFilesCount)",
-                    lang
-                ),
+                text: archiveText,
                 color: .secondary,
                 showDot: false,
                 systemImage: "doc.text.magnifyingglass"
@@ -111,7 +173,76 @@ struct UsageHeatmapView: View {
         let total = currentTotal
         let promptTotal = total.inputTokens + total.cacheReadTokens
         let cacheRate = promptTotal > 0 ? Int((Double(total.cacheReadTokens) / Double(promptTotal) * 100).rounded()) : 0
-        let subRatio = total.estimatedCostUSD / PricingCatalog.proSubscriptionMonthlyUSD
+
+        let cacheSubtitle: String = {
+            let base = L10n.t(
+                zhHans: "命中 \(TokenFormatting.compactTokens(total.cacheReadTokens))",
+                zhHant: "命中 \(TokenFormatting.compactTokens(total.cacheReadTokens))",
+                en: "Cached \(TokenFormatting.compactTokens(total.cacheReadTokens))",
+                ru: "Кэш \(TokenFormatting.compactTokens(total.cacheReadTokens))",
+                lang
+            )
+            if total.cacheSavingsUSD >= 0.005 {
+                let saved = TokenFormatting.usd(total.cacheSavingsUSD)
+                return L10n.t(
+                    zhHans: "\(base) · 省 \(saved)",
+                    zhHant: "\(base) · 省 \(saved)",
+                    en: "\(base) · Saved \(saved)",
+                    ru: "\(base) · Эк. \(saved)",
+                    lang
+                )
+            }
+            return base
+        }()
+
+        let tierInfo = monitorStore.effectiveSubscriptionTier
+        let costSubtitle: String = {
+            if let monthlyUSD = tierInfo.monthlyReferenceUSD, monthlyUSD > 0 {
+                let ratio = total.estimatedCostUSD / monthlyUSD
+                switch tierInfo.tierKind {
+                case .ultra:
+                    return String(
+                        format: L10n.t(
+                            zhHans: "≈ %.1fx $249.99 Ultra 月费",
+                            zhHant: "≈ %.1fx $249.99 Ultra 月費",
+                            en: "≈ %.1fx $249.99 Ultra/mo",
+                            ru: "≈ %.1fx $249.99 Ultra/мес",
+                            lang
+                        ),
+                        ratio
+                    )
+                case .pro:
+                    return String(
+                        format: L10n.t(
+                            zhHans: "≈ %.1fx $20 Pro 月费",
+                            zhHant: "≈ %.1fx $20 Pro 月費",
+                            en: "≈ %.1fx $20 Pro/mo",
+                            ru: "≈ %.1fx $20 Pro/мес",
+                            lang
+                        ),
+                        ratio
+                    )
+                case .free, .unknown:
+                    break
+                }
+            }
+            if tierInfo.tierKind == .free {
+                return L10n.t(
+                    zhHans: "Free 档 · 参考 API 单价",
+                    zhHant: "Free 檔 · 參考 API 單價",
+                    en: "Free tier · API reference",
+                    ru: "Free · оценка по API",
+                    lang
+                )
+            }
+            return L10n.t(
+                zhHans: "参考 API 公开单价",
+                zhHant: "參考 API 公開單價",
+                en: "Est. via public API pricing",
+                ru: "Оценка по тарифам API",
+                lang
+            )
+        }()
 
         return Grid(horizontalSpacing: 8, verticalSpacing: 8) {
             GridRow {
@@ -132,13 +263,7 @@ struct UsageHeatmapView: View {
                 PilotMetricTile(
                     title: L10n.t("缓存命中率", "Cache Hit Rate", lang),
                     value: "\(cacheRate)%",
-                    subtitle: L10n.t(
-                        zhHans: "命中 \(TokenFormatting.compactTokens(total.cacheReadTokens))",
-                        zhHant: "命中 \(TokenFormatting.compactTokens(total.cacheReadTokens))",
-                        en: "Cached \(TokenFormatting.compactTokens(total.cacheReadTokens))",
-                        ru: "Кэш \(TokenFormatting.compactTokens(total.cacheReadTokens))",
-                        lang
-                    ),
+                    subtitle: cacheSubtitle,
                     icon: "bolt.fill",
                     tint: PilotMorandiPalette.kpiCache(colorScheme: colorScheme),
                     compact: true
@@ -160,10 +285,7 @@ struct UsageHeatmapView: View {
                 PilotMetricTile(
                     title: L10n.t("估算 API 账单", "Est. API Cost", lang),
                     value: TokenFormatting.usd(total.estimatedCostUSD),
-                    subtitle: String(
-                        format: L10n.t("≈ %.1fx $20 Pro 月费", "≈ %.1fx $20 Pro/mo", lang),
-                        subRatio
-                    ),
+                    subtitle: costSubtitle,
                     icon: "dollarsign.circle.fill",
                     tint: PilotMorandiPalette.kpiCost(colorScheme: colorScheme),
                     compact: true
@@ -368,18 +490,15 @@ struct UsageHeatmapView: View {
         }
         .chartXAxis {
             AxisMarks(values: xLabels) { val in
-                AxisValueLabel(centered: true) {
+                AxisValueLabel {
                     if let s = val.as(String.self) {
                         Text(s)
                             .font(.system(size: 9.5))
                             .monospacedDigit()
-                            .lineLimit(1)
-                            .fixedSize()
                     }
                 }
             }
         }
-        .padding(.horizontal, 6)
 
         if #available(macOS 14, *) {
             chart.chartXSelection(value: Binding(
@@ -393,88 +512,160 @@ struct UsageHeatmapView: View {
         }
     }
 
-    private var modelBreakdownCard: some View {
-        let models = displayedModels
-        let maxTokens = max(1, models.map(\.totalTokens).max() ?? 1)
-
-        return PilotCard(padding: 11, fillHeight: true) {
+    private var breakdownCard: some View {
+        PilotCard(padding: 11, fillHeight: true) {
             VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Label(
-                        L10n.t(
-                            zhHans: "按模型用量与预估费用（\(selectedPeriod.localizedTitle(lang))）",
-                            zhHant: "按模型用量與預估費用（\(selectedPeriod.localizedTitle(lang))）",
-                            en: "Usage & Est. Cost by Model (\(selectedPeriod.localizedTitle(lang)))",
-                            ru: "По моделям (\(selectedPeriod.localizedTitle(lang)))",
-                            lang
-                        ),
-                        systemImage: "chart.pie.fill"
-                    )
-                    .font(.caption.weight(.semibold))
+                HStack(spacing: 10) {
+                    Picker("", selection: $breakdownDimension) {
+                        ForEach(UsageBreakdownDimension.allCases) { dim in
+                            Text(dim.localizedTitle(lang)).tag(dim)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                    .frame(width: 210)
+
                     Spacer()
+
                     Text(L10n.t("参考 API 定价估算，非实际扣费", "Estimated via API pricing, not actual billing", lang))
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                 }
 
-                if models.isEmpty {
-                    Text(L10n.t("所选周期暂无模型调用记录。", "No model usage recorded in this period.", lang))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-                } else {
-                    HStack(alignment: .center, spacing: 16) {
-                        if #available(macOS 14, *) {
-                            Chart(models) { item in
-                                SectorMark(
-                                    angle: .value("Tokens", max(1, item.totalTokens)),
-                                    innerRadius: .ratio(0.60),
-                                    angularInset: 1.5
-                                )
-                                .foregroundStyle(by: .value("Model", item.displayName))
+                switch breakdownDimension {
+                case .model:
+                    donutBreakdownBody(entries: displayedModelEntries)
+                case .project:
+                    donutBreakdownBody(entries: displayedProjectEntries)
+                case .session:
+                    sessionBreakdownBody(sessions: Array(currentSessions.prefix(20)))
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func donutBreakdownBody(entries: [BreakdownChartEntry]) -> some View {
+        let maxTokens = max(1, entries.map(\.totalTokens).max() ?? 1)
+        if entries.isEmpty {
+            Text(L10n.t("所选周期暂无模型调用记录。", "No model usage recorded in this period.", lang))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+        } else {
+            HStack(alignment: .center, spacing: 16) {
+                if #available(macOS 14, *) {
+                    Chart(entries) { item in
+                        SectorMark(
+                            angle: .value("Tokens", max(1, item.totalTokens)),
+                            innerRadius: .ratio(0.60),
+                            angularInset: 1.5
+                        )
+                        .foregroundStyle(by: .value("Item", item.displayName))
+                    }
+                    .chartForegroundStyleScale(
+                        domain: entries.map(\.displayName),
+                        range: Array(chartPalette.prefix(entries.count))
+                    )
+                    .chartLegend(.hidden)
+                    .frame(width: 104, height: 104)
+                }
+
+                VStack(spacing: 6) {
+                    ForEach(Array(entries.enumerated()), id: \.element.id) { idx, item in
+                        let rowColor = chartPalette[idx % chartPalette.count]
+                        HStack(spacing: 8) {
+                            HStack(spacing: 6) {
+                                Circle()
+                                    .fill(rowColor)
+                                    .frame(width: 7, height: 7)
+                                Text(item.displayName)
+                                    .font(.caption.weight(.medium))
+                                    .lineLimit(1)
                             }
-                            .chartForegroundStyleScale(
-                                domain: models.map(\.displayName),
-                                range: Array(chartPalette.prefix(models.count))
+                            .frame(width: 136, alignment: .leading)
+
+                            PilotLinearBar(
+                                fraction: Double(item.totalTokens) / Double(maxTokens),
+                                tint: rowColor,
+                                height: 5.5
                             )
-                            .chartLegend(.hidden)
-                            .frame(width: 104, height: 104)
-                        }
 
-                        VStack(spacing: 6) {
-                            ForEach(Array(models.enumerated()), id: \.element.id) { idx, item in
-                                let rowColor = chartPalette[idx % chartPalette.count]
-                                HStack(spacing: 8) {
-                                    HStack(spacing: 6) {
-                                        Circle()
-                                            .fill(rowColor)
-                                            .frame(width: 7, height: 7)
-                                        Text(item.displayName)
-                                            .font(.caption.weight(.medium))
-                                            .lineLimit(1)
-                                    }
-                                    .frame(width: 124, alignment: .leading)
+                            Text(TokenFormatting.compactTokens(item.totalTokens))
+                                .font(.system(.caption, design: .rounded))
+                                .monospacedDigit()
+                                .frame(width: 54, alignment: .trailing)
 
-                                    PilotLinearBar(
-                                        fraction: Double(item.totalTokens) / Double(maxTokens),
-                                        tint: rowColor,
-                                        height: 5.5
-                                    )
-
-                                    Text(TokenFormatting.compactTokens(item.totalTokens))
-                                        .font(.system(.caption, design: .rounded))
-                                        .monospacedDigit()
-                                        .frame(width: 54, alignment: .trailing)
-
-                                    Text(TokenFormatting.usd(item.estimatedCostUSD))
-                                        .font(.system(.caption, design: .rounded).weight(.semibold))
-                                        .monospacedDigit()
-                                        .frame(width: 56, alignment: .trailing)
-                                }
-                            }
+                            Text(TokenFormatting.usd(item.estimatedCostUSD))
+                                .font(.system(.caption, design: .rounded).weight(.semibold))
+                                .monospacedDigit()
+                                .frame(width: 56, alignment: .trailing)
                         }
                     }
-                    .frame(maxHeight: .infinity, alignment: .center)
+                }
+            }
+            .frame(maxHeight: .infinity, alignment: .center)
+        }
+    }
+
+    @ViewBuilder
+    private func sessionBreakdownBody(sessions: [SessionUsageSummary]) -> some View {
+        let maxTokens = max(1, sessions.map(\.totalTokens).max() ?? 1)
+        if sessions.isEmpty {
+            Text(L10n.t("所选周期暂无会话调用记录。", "No session usage recorded in this period.", lang))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+        } else {
+            ScrollView {
+                VStack(spacing: 5) {
+                    ForEach(Array(sessions.enumerated()), id: \.element.id) { idx, item in
+                        let rowColor = chartPalette[idx % chartPalette.count]
+                        HStack(spacing: 8) {
+                            Text(item.title)
+                                .font(.caption.weight(.medium))
+                                .lineLimit(1)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+
+                            if let project = item.projectName, !project.isEmpty {
+                                Text(project)
+                                    .font(.system(size: 10))
+                                    .padding(.horizontal, 5)
+                                    .padding(.vertical, 1.5)
+                                    .background(Color.primary.opacity(0.06))
+                                    .foregroundStyle(.secondary)
+                                    .clipShape(Capsule())
+                                    .lineLimit(1)
+                            }
+
+                            if item.clientSource == .cli {
+                                Text("CLI")
+                                    .font(.system(size: 9.5, weight: .semibold))
+                                    .padding(.horizontal, 5)
+                                    .padding(.vertical, 1.5)
+                                    .background(rowColor.opacity(0.18))
+                                    .foregroundStyle(rowColor)
+                                    .clipShape(Capsule())
+                            }
+
+                            PilotLinearBar(
+                                fraction: Double(item.totalTokens) / Double(maxTokens),
+                                tint: rowColor,
+                                height: 4.5
+                            )
+                            .frame(width: 68)
+
+                            Text(TokenFormatting.compactTokens(item.totalTokens))
+                                .font(.system(.caption, design: .rounded))
+                                .monospacedDigit()
+                                .frame(width: 52, alignment: .trailing)
+
+                            Text(TokenFormatting.usd(item.estimatedCostUSD))
+                                .font(.system(.caption, design: .rounded).weight(.semibold))
+                                .monospacedDigit()
+                                .frame(width: 54, alignment: .trailing)
+                        }
+                    }
                 }
             }
         }

@@ -126,6 +126,7 @@ if command -v "$SWIFTC" >/dev/null 2>&1; then
     "$ROOT/src/App/Models/ProxyModels.swift"
     "$ROOT/src/App/Services/AppSupportStore.swift"
     "$ROOT/src/App/Services/LanguageServerClient.swift"
+    "$ROOT/src/App/Services/LocalSessionIndexReader.swift"
     "$ROOT/src/App/Services/ProxyHealthService.swift"
     "$ROOT/src/App/Services/TranscriptScanner.swift"
     "$ROOT/src/McpServer/MCPProtocol.swift"
@@ -138,6 +139,7 @@ if command -v "$SWIFTC" >/dev/null 2>&1; then
     "$SWIFTC" -O \
       -sdk "$SDKROOT" \
       -target "${arch}-apple-macos${MIN_MACOS}" \
+      -lsqlite3 \
       -o "$out_mcp" \
       "${MCP_SOURCES[@]}"
     MCP_BINS+=("$out_mcp")
@@ -167,6 +169,7 @@ if command -v "$SWIFTC" >/dev/null 2>&1; then
     "$SWIFTC" -parse-as-library -O \
       -sdk "$SDKROOT" \
       -target "${arch}-apple-macos${MIN_MACOS}" \
+      -lsqlite3 \
       -o "$out_bin" \
       "${SWIFT_SOURCES[@]}"
     SWIFT_BINS+=("$out_bin")
@@ -192,6 +195,9 @@ if command -v "$SWIFTC" >/dev/null 2>&1; then
   cp "$BUILD_DIR/antigravity-pilot-mcp" "$APP_RESOURCES/antigravity-pilot-mcp"
   cp "$MCP_HTML" "$APP_RESOURCES/pilot-mcp-dashboard.html"
   cp "$ROOT/icon.png" "$APP_RESOURCES/icon.png"
+  if [[ -f "$ROOT/pricing-catalog.json" ]]; then
+    cp "$ROOT/pricing-catalog.json" "$APP_RESOURCES/pricing-catalog.json"
+  fi
   if [[ -f "$ROOT/menubar-icon.png" ]]; then
     sips -z 18 18 "$ROOT/menubar-icon.png" --out "$APP_RESOURCES/menubar-icon.png" >/dev/null
     sips -z 36 36 "$ROOT/menubar-icon.png" --out "$APP_RESOURCES/menubar-icon@2x.png" >/dev/null
