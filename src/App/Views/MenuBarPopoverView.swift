@@ -3,6 +3,7 @@ import SwiftUI
 struct MenuBarPopoverView: View {
     @ObservedObject var appModel: AppModel
     @ObservedObject var monitorStore: MonitorStore
+    @ObservedObject var antigravityUpdateStore: AntigravityUpdateStore
     var onOpenMainWindow: () -> Void
     var onClosePopover: () -> Void
     var onQuit: () -> Void
@@ -25,6 +26,30 @@ struct MenuBarPopoverView: View {
                     Spacer()
                     PilotStatusPill(text: appModel.healthReport.summaryTitle, color: healthColor)
                 }
+            }
+
+            if let notice = antigravityNotice {
+                Button {
+                    onClosePopover()
+                    onOpenMainWindow()
+                } label: {
+                    PilotRecessedBox(padding: 8) {
+                        HStack(spacing: 7) {
+                            Image(systemName: notice.symbol)
+                                .font(.caption)
+                                .foregroundStyle(notice.color)
+                            Text(notice.text)
+                                .font(.caption.weight(.medium))
+                                .foregroundStyle(.primary)
+                                .lineLimit(1)
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
             }
 
             liveContextBox
@@ -78,6 +103,49 @@ struct MenuBarPopoverView: View {
             .controlSize(.small)
             .help(L10n.t("刷新状态", "Refresh", lang))
         }
+    }
+
+    private var antigravityNotice: (symbol: String, color: Color, text: String)? {
+        if case .available(_, let manifest, _, _) = antigravityUpdateStore.state,
+           manifest.version != appModel.config.skippedAntigravityVersion {
+            return (
+                "arrow.down.circle.fill",
+                .blue,
+                L10n.t(
+                    zhHans: "发现 Antigravity \(manifest.version) · 点击更新",
+                    zhHant: "發現 Antigravity \(manifest.version) · 點擊更新",
+                    en: "Antigravity \(manifest.version) available · Update",
+                    ru: "Доступен Antigravity \(manifest.version) · Обновить",
+                    lang
+                )
+            )
+        }
+        if antigravityUpdateStore.state.isBusy,
+           let manifest = antigravityUpdateStore.state.activeManifest {
+            return (
+                "arrow.triangle.2.circlepath",
+                .blue,
+                L10n.t(
+                    zhHans: "正在更新 Antigravity \(manifest.version)...",
+                    zhHant: "正在更新 Antigravity \(manifest.version)...",
+                    en: "Updating Antigravity \(manifest.version)...",
+                    ru: "Обновление Antigravity \(manifest.version)...",
+                    lang
+                )
+            )
+        }
+        if appModel.runtimeStatusKind == .updateNeeded {
+            return (
+                "exclamationmark.arrow.circlepath",
+                .orange,
+                L10n.t(
+                    "原版已更新 · 打开主窗口重建副本",
+                    "Antigravity updated · Open window to rebuild",
+                    lang
+                )
+            )
+        }
+        return nil
     }
 
     private var healthColor: Color {

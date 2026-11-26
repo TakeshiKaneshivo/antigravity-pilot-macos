@@ -1,15 +1,22 @@
 import Foundation
 
 struct AppSupport {
-    let sourceApp = URL(fileURLWithPath: "/Applications/Antigravity.app")
+    let sourceApp: URL
+    private let customRoot: URL?
     private let customPluginsRoot: URL?
 
-    init(pluginsRoot: URL? = nil) {
+    init(
+        sourceApp: URL = URL(fileURLWithPath: "/Applications/Antigravity.app"),
+        rootOverride: URL? = nil,
+        pluginsRoot: URL? = nil
+    ) {
+        self.sourceApp = sourceApp
+        self.customRoot = rootOverride
         self.customPluginsRoot = pluginsRoot
     }
 
     var root: URL {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        customRoot ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Antigravity Pilot", isDirectory: true)
     }
 
@@ -54,6 +61,20 @@ struct AppSupport {
 
     var updatesDirectory: URL {
         root.appendingPathComponent("Updates", isDirectory: true)
+    }
+
+    var antigravityUpdatesDirectory: URL {
+        updatesDirectory.appendingPathComponent("Antigravity", isDirectory: true)
+    }
+
+    var antigravitySharedPendingZipURL: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Caches/com.google.antigravity/pending/Antigravity.zip")
+    }
+
+    var runtimeShipItCacheDirectory: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Caches/com.google.antigravity.pilot.runtime.ShipIt", isDirectory: true)
     }
 
     var pluginsRoot: URL {

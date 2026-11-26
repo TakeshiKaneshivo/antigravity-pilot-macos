@@ -24,6 +24,7 @@ struct AntigravityProxyApp: App {
                 appModel: appDelegate.appModel,
                 monitorStore: appDelegate.monitorStore,
                 updateStore: appDelegate.updateStore,
+                antigravityUpdateStore: appDelegate.antigravityUpdateStore,
                 onHideToMenuBar: {
                     appDelegate.hideMainWindowToMenuBar()
                 }
@@ -41,6 +42,7 @@ final class BuilderAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
     let appModel = AppModel()
     let monitorStore = MonitorStore()
     let updateStore = UpdateStore()
+    let antigravityUpdateStore = AntigravityUpdateStore()
     private var statusBarController: StatusBarController?
     private weak var mainWindow: NSWindow?
     private var cancellables = Set<AnyCancellable>()
@@ -51,11 +53,15 @@ final class BuilderAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
         updateStore.startAutoCheckSchedule { [weak self] in
             self?.appModel.config ?? .defaultConfig
         }
+        antigravityUpdateStore.startAutoCheckSchedule { [weak self] in
+            self?.appModel.config ?? .defaultConfig
+        }
 
         statusBarController = StatusBarController(
             appModel: appModel,
             monitorStore: monitorStore,
             updateStore: updateStore,
+            antigravityUpdateStore: antigravityUpdateStore,
             onOpenMainWindow: { [weak self] in self?.showMainWindow() },
             onOpenUpdatePopover: { [weak self] in
                 self?.showMainWindow()
@@ -172,6 +178,7 @@ final class StatusBarController: NSObject, NSPopoverDelegate, NSMenuDelegate {
         appModel: AppModel,
         monitorStore: MonitorStore,
         updateStore: UpdateStore,
+        antigravityUpdateStore: AntigravityUpdateStore,
         onOpenMainWindow: @escaping () -> Void,
         onOpenUpdatePopover: @escaping () -> Void,
         onQuit: @escaping () -> Void
@@ -192,6 +199,7 @@ final class StatusBarController: NSObject, NSPopoverDelegate, NSMenuDelegate {
             rootView: MenuBarPopoverView(
                 appModel: appModel,
                 monitorStore: monitorStore,
+                antigravityUpdateStore: antigravityUpdateStore,
                 onOpenMainWindow: onOpenMainWindow,
                 onClosePopover: { [weak self] in self?.closePopover() },
                 onQuit: onQuit
@@ -254,6 +262,7 @@ final class StatusBarController: NSObject, NSPopoverDelegate, NSMenuDelegate {
         if popover.isShown {
             popover.performClose(nil)
         } else {
+            appModel.refreshRuntimeStatus()
             appModel.refreshRunningInstances()
             monitorStore.setInteractiveVisible(true)
             popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
@@ -828,6 +837,248 @@ enum SmokeTestRunner {
         }
         check(eligibilityOK, "AppUpdateService.checkInstallEligibility distinguishes writable .app, non-.app, and AppTranslocation")
 
+        // 17. AntigravityUpdateService YAML parser, arch filtering, validation & app-update.yml feed resolution
+        let validSHA512 = Data(repeating: 0xAB, count: 64).base64EncodedString()
+        let armYAML = """
+        version: 2.36.0
+        files:
+          - url: https://storage.googleapis.com/antigravity-public/antigravity-hub/2.36.0/darwin-arm/Antigravity.zip
+            sha512: \(validSHA512)
+            size: 216133032
+        path: Antigravity.zip
+        sha512: \(validSHA512)
+        """
+        let relYAML = """
+        version: '2.36.1'
+        files:
+          - url: darwin-x64/Antigravity.zip
+            sha512: '\(validSHA512)'
+            size: 224099686
+        """
+        let badSHAYAML = """
+        version: 2.36.0
+        files:
+          - url: https://example.com/Antigravity.zip
+            sha512: invalid-sha512
+        """
+        let httpYAML = """
+        version: 2.36.0
+        files:
+          - url: http://example.com/Antigravity.zip
+            sha512: \(validSHA512)
+        """
+        let feedBase = URL(string: "https://example.com/manifest/")!
+        let parsedArm = try? AntigravityUpdateService.parseElectronUpdaterYAML(armYAML, baseURL: feedBase, isArm64: true)
+        let parsedRel = try? AntigravityUpdateService.parseElectronUpdaterYAML(relYAML, baseURL: feedBase, isArm64: false)
+        var rejectedBadSHA = false
+        do {
+            _ = try AntigravityUpdateService.parseElectronUpdaterYAML(badSHAYAML, baseURL: feedBase, isArm64: true)
+        } catch {
+            rejectedBadSHA = true
+        }
+        var rejectedHTTPYAML = false
+        do {
+            _ = try AntigravityUpdateService.parseElectronUpdaterYAML(httpYAML, baseURL: feedBase, isArm64: true, allowInsecureHTTP: false)
+        } catch {
+            rejectedHTTPYAML = true
+        }
+        let tempFeedApp = tempUpdatesRoot.appendingPathComponent("FeedSource.app", isDirectory: true)
+        let tempFeedRes = tempFeedApp.appendingPathComponent("Contents/Resources", isDirectory: true)
+        try? FileManager.default.createDirectory(at: tempFeedRes, withIntermediateDirectories: true)
+        try? "provider: generic\nurl: https://custom.example.com/manifest\n".write(
+            to: tempFeedRes.appendingPathComponent("app-update.yml"),
+            atomically: true,
+            encoding: .utf8
+        )
+        let resolvedCustomFeed = AntigravityUpdateService.readFeedBaseURL(from: tempFeedApp)
+        let fallbackFeed = AntigravityUpdateService.readFeedBaseURL(from: tempUpdatesRoot.appendingPathComponent("Missing.app"))
+        check(
+            parsedArm?.version == "2.36.0"
+                && parsedArm?.size == 216133032
+                && parsedRel?.downloadURL == "https://example.com/manifest/darwin-x64/Antigravity.zip"
+                && rejectedBadSHA
+                && rejectedHTTPYAML
+                && resolvedCustomFeed.absoluteString == "https://custom.example.com/manifest/"
+                && fallbackFeed == AntigravityUpdateService.defaultFeedBaseURL,
+            "AntigravityUpdateService parses YAML, validates SHA-512/HTTPS, and resolves app-update.yml feed"
+        )
+
+        // 18. AntigravityUpdateService loopback E2E manifest fetch, streaming SHA-512 zip download, cache hit & tamper rejection
+        let agZipPayload = Data("Mock-Antigravity-Archive-Payload-2.36.0".utf8)
+        let agSHA512 = Data(SHA512.hash(data: agZipPayload)).base64EncodedString()
+        let agUpdatesDir = tempUpdatesRoot.appendingPathComponent("ag-updates", isDirectory: true)
+        if let agPort = spawnMockAntigravityServer(payload: agZipPayload, sha512Base64: agSHA512) {
+            let agFeedURL = URL(string: "http://127.0.0.1:\(agPort)/latest-arm64-mac.yml")!
+            let agSem = DispatchSemaphore(value: 0)
+            Task {
+                do {
+                    let (manifest, route) = try await AntigravityUpdateService.fetchManifest(
+                        sourceApp: tempFeedApp,
+                        installedVersion: "2.35.2",
+                        config: ProxyConfig.defaultConfig,
+                        feedOverride: agFeedURL,
+                        allowInsecureHTTPOverride: true,
+                        isArm64: true
+                    )
+                    check(manifest.version == "2.36.0" && route == .direct, "AntigravityUpdateService fetches & parses YAML over loopback HTTP")
+
+                    let (zip1, _) = try await AntigravityUpdateService.downloadAndVerifyZip(
+                        manifest: manifest,
+                        config: ProxyConfig.defaultConfig,
+                        updatesDir: agUpdatesDir,
+                        sharedPendingZipURL: nil,
+                        allowInsecureHTTP: true
+                    ) { _, _, _ in }
+                    let (zip2, _) = try await AntigravityUpdateService.downloadAndVerifyZip(
+                        manifest: manifest,
+                        config: ProxyConfig.defaultConfig,
+                        updatesDir: agUpdatesDir,
+                        sharedPendingZipURL: nil,
+                        allowInsecureHTTP: true
+                    ) { _, _, _ in }
+                    let z1Data = try? Data(contentsOf: zip1)
+                    check(zip1 == zip2 && z1Data == agZipPayload, "AntigravityUpdateService verifies SHA-512 zip download and reuses verified cache")
+
+                    let badManifest = AntigravityUpdateManifest(
+                        version: "2.36.1",
+                        downloadURL: "http://127.0.0.1:\(agPort)/Antigravity.zip",
+                        fileName: "Antigravity.zip",
+                        sha512Base64: Data(repeating: 0x00, count: 64).base64EncodedString(),
+                        size: Int64(agZipPayload.count),
+                        releaseDate: nil
+                    )
+                    var rejectedTampered = false
+                    do {
+                        _ = try await AntigravityUpdateService.downloadAndVerifyZip(
+                            manifest: badManifest,
+                            config: ProxyConfig.defaultConfig,
+                            updatesDir: agUpdatesDir,
+                            sharedPendingZipURL: nil,
+                            allowInsecureHTTP: true
+                        ) { _, _, _ in }
+                    } catch AntigravityUpdateError.checksumMismatch {
+                        rejectedTampered = true
+                    } catch {
+                        rejectedTampered = false
+                    }
+                    let badPart = agUpdatesDir.appendingPathComponent("v2.36.1/Antigravity.zip.part").path
+                    check(rejectedTampered && !FileManager.default.fileExists(atPath: badPart), "AntigravityUpdateService rejects tampered SHA-512 and deletes .part file")
+                } catch {
+                    check(false, "AntigravityUpdateService loopback E2E failed: \(error.localizedDescription)")
+                }
+                agSem.signal()
+            }
+            agSem.wait()
+        } else {
+            check(false, "Spawn loopback Antigravity mock server")
+        }
+
+        // 19. AntigravityUpdateService ditto extraction, Info.plist check & atomic replacement
+        let mockZipRoot = tempUpdatesRoot.appendingPathComponent("mock-zip-src", isDirectory: true)
+        let mockAppBundle = mockZipRoot.appendingPathComponent("Antigravity.app", isDirectory: true)
+        let mockAppContents = mockAppBundle.appendingPathComponent("Contents", isDirectory: true)
+        try? FileManager.default.createDirectory(at: mockAppContents, withIntermediateDirectories: true)
+        let newPlist: [String: Any] = [
+            "CFBundleIdentifier": "com.google.antigravity",
+            "CFBundleShortVersionString": "2.99.0",
+            "CFBundleVersion": "2.99.0"
+        ]
+        if let newPlistData = try? PropertyListSerialization.data(fromPropertyList: newPlist, format: .xml, options: 0) {
+            try? newPlistData.write(to: mockAppContents.appendingPathComponent("Info.plist"))
+        }
+        let mockArchiveURL = tempUpdatesRoot.appendingPathComponent("Antigravity-mock.zip")
+        let dittoProc = Process()
+        dittoProc.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+        dittoProc.arguments = ["-ck", "--keepParent", mockAppBundle.path, mockArchiveURL.path]
+        try? dittoProc.run()
+        dittoProc.waitUntilExit()
+
+        let mockZipData = (try? Data(contentsOf: mockArchiveURL)) ?? Data()
+        let mockManifest = AntigravityUpdateManifest(
+            version: "2.99.0",
+            downloadURL: "https://example.com/Antigravity.zip",
+            fileName: "Antigravity.zip",
+            sha512Base64: Data(SHA512.hash(data: mockZipData)).base64EncodedString(),
+            size: Int64(mockZipData.count),
+            releaseDate: nil
+        )
+        let extractStaging = tempUpdatesRoot.appendingPathComponent("extract-staging", isDirectory: true)
+        let targetAppDir = tempUpdatesRoot.appendingPathComponent("Applications", isDirectory: true)
+        let targetMockApp = targetAppDir.appendingPathComponent("Antigravity.app", isDirectory: true)
+        let targetMockContents = targetMockApp.appendingPathComponent("Contents", isDirectory: true)
+        try? FileManager.default.createDirectory(at: targetMockContents, withIntermediateDirectories: true)
+        let oldPlist: [String: Any] = [
+            "CFBundleIdentifier": "com.google.antigravity",
+            "CFBundleShortVersionString": "2.35.0",
+            "CFBundleVersion": "2.35.0"
+        ]
+        if let oldPlistData = try? PropertyListSerialization.data(fromPropertyList: oldPlist, format: .xml, options: 0) {
+            try? oldPlistData.write(to: targetMockContents.appendingPathComponent("Info.plist"))
+        }
+        do {
+            let stagedApp = try AntigravityUpdateService.extractAndVerifyApp(
+                zipURL: mockArchiveURL,
+                manifest: mockManifest,
+                stagingRoot: extractStaging,
+                requireOfficialSignature: false,
+                lang: .en
+            )
+            try AntigravityUpdateService.atomicallyReplaceSourceApp(stagedApp: stagedApp, targetApp: targetMockApp, lang: .en)
+            let replacedVer = RuntimeBuilder.readBundleShortVersion(at: targetMockApp.appendingPathComponent("Contents/Info.plist"))
+            check(replacedVer == "2.99.0", "AntigravityUpdateService extracts zip with ditto and atomically replaces target app")
+        } catch {
+            check(false, "AntigravityUpdateService extract & atomic replace failed: \(error.localizedDescription)")
+        }
+
+        // 20. canFastHotUpdate rejects runtime copy with app-update.yml + real /Applications/Antigravity.app Google signature check
+        let isolatedRoot = tempUpdatesRoot.appendingPathComponent("pilot-support", isDirectory: true)
+        let isolatedSupport = AppSupport(sourceApp: targetMockApp, rootOverride: isolatedRoot)
+        let mockRuntime = isolatedSupport.runtimeApp
+        let mockRuntimeMacOS = mockRuntime.appendingPathComponent("Contents/MacOS", isDirectory: true)
+        let mockRuntimeRes = mockRuntime.appendingPathComponent("Contents/Resources", isDirectory: true)
+        try? FileManager.default.createDirectory(at: mockRuntimeMacOS, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(at: mockRuntimeRes, withIntermediateDirectories: true)
+        if let resPath = Bundle.main.resourcePath {
+            let resBase = URL(fileURLWithPath: resPath, isDirectory: true)
+            try? FileManager.default.copyItem(
+                at: resBase.appendingPathComponent("AntigravityProxyLauncher"),
+                to: mockRuntimeMacOS.appendingPathComponent("AntigravityProxyLauncher")
+            )
+            try? FileManager.default.copyItem(
+                at: resBase.appendingPathComponent("libantigravity_proxy.dylib"),
+                to: mockRuntimeRes.appendingPathComponent("libantigravity_proxy.dylib")
+            )
+        }
+        try? "AG_SOURCE_VERSION=2.99.0\nAG_SOURCE_BUILD=2.99.0\n".write(
+            to: mockRuntimeRes.appendingPathComponent("proxy.env"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try? "provider: generic\n".write(
+            to: mockRuntimeRes.appendingPathComponent("app-update.yml"),
+            atomically: true,
+            encoding: .utf8
+        )
+        let blockedByYML = !RuntimeBuilder.canFastHotUpdate(config: ProxyConfig.defaultConfig, support: isolatedSupport)
+        var googleSigOK = true
+        if FileManager.default.fileExists(atPath: sourceApp.path) {
+            let verifyProc = Process()
+            verifyProc.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
+            verifyProc.arguments = [
+                "--verify",
+                "--deep",
+                "--strict",
+                "-R=\(AntigravityUpdateService.expectedCodeSignRequirement)",
+                sourceApp.path
+            ]
+            verifyProc.standardOutput = FileHandle.nullDevice
+            verifyProc.standardError = FileHandle.nullDevice
+            try? verifyProc.run()
+            verifyProc.waitUntilExit()
+            googleSigOK = (verifyProc.terminationStatus == 0)
+        }
+        check(blockedByYML && googleSigOK, "canFastHotUpdate flags app-update.yml & real Antigravity passes Google codesign -R")
+
         exit(tracker.hasFailed ? 1 : 0)
     }
 
@@ -938,6 +1189,78 @@ enum SmokeTestRunner {
                 } else {
                     body = payload
                     contentType = "application/octet-stream"
+                }
+                let header = "HTTP/1.1 200 OK\r\nContent-Type: \(contentType)\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n"
+                _ = Data(header.utf8).withUnsafeBytes { raw in
+                    Darwin.send(clientFd, raw.baseAddress, header.utf8.count, 0)
+                }
+                _ = body.withUnsafeBytes { raw in
+                    Darwin.send(clientFd, raw.baseAddress, body.count, 0)
+                }
+                close(clientFd)
+            }
+            close(listenFd)
+        }
+        return port
+    }
+
+    private static func spawnMockAntigravityServer(payload: Data, sha512Base64: String) -> UInt16? {
+        let listenFd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)
+        guard listenFd >= 0 else { return nil }
+        var yes: Int32 = 1
+        setsockopt(listenFd, SOL_SOCKET, SO_REUSEADDR, &yes, socklen_t(MemoryLayout<Int32>.size))
+
+        var addr = sockaddr_in()
+        addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_port = 0
+        addr.sin_addr.s_addr = inet_addr("127.0.0.1")
+
+        let bindOk = withUnsafePointer(to: &addr) { ptr -> Int32 in
+            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sa in
+                Darwin.bind(listenFd, sa, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        guard bindOk == 0, Darwin.listen(listenFd, 8) == 0 else {
+            close(listenFd)
+            return nil
+        }
+
+        var boundAddr = sockaddr_in()
+        var len = socklen_t(MemoryLayout<sockaddr_in>.size)
+        _ = withUnsafeMutablePointer(to: &boundAddr) { ptr in
+            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sa in
+                getsockname(listenFd, sa, &len)
+            }
+        }
+        let port = UInt16(bigEndian: boundAddr.sin_port)
+
+        let yamlText = """
+        version: 2.36.0
+        files:
+          - url: http://127.0.0.1:\(port)/Antigravity.zip
+            sha512: \(sha512Base64)
+            size: \(payload.count)
+        path: Antigravity.zip
+        sha512: \(sha512Base64)
+        """
+        let yamlData = Data(yamlText.utf8)
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            for _ in 0..<3 {
+                let clientFd = Darwin.accept(listenFd, nil, nil)
+                guard clientFd >= 0 else { break }
+                var buf = [UInt8](repeating: 0, count: 2048)
+                let n = Darwin.recv(clientFd, &buf, buf.count, 0)
+                let reqText = n > 0 ? (String(bytes: buf[0..<n], encoding: .utf8) ?? "") : ""
+                let body: Data
+                let contentType: String
+                if reqText.contains("GET /latest-arm64-mac.yml") {
+                    body = yamlData
+                    contentType = "text/yaml"
+                } else {
+                    body = payload
+                    contentType = "application/zip"
                 }
                 let header = "HTTP/1.1 200 OK\r\nContent-Type: \(contentType)\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n"
                 _ = Data(header.utf8).withUnsafeBytes { raw in

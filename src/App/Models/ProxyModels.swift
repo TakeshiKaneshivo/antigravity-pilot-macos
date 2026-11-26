@@ -15,6 +15,7 @@ struct ProxyConfig: Codable, Equatable {
     var appLanguage: AppLanguage
     var autoCheckUpdates: Bool
     var skippedUpdateVersion: String?
+    var skippedAntigravityVersion: String?
 
     static let defaultConfig = ProxyConfig(
         host: "127.0.0.1",
@@ -27,7 +28,8 @@ struct ProxyConfig: Codable, Equatable {
         showMenuBarMetrics: true,
         appLanguage: .system,
         autoCheckUpdates: true,
-        skippedUpdateVersion: nil
+        skippedUpdateVersion: nil,
+        skippedAntigravityVersion: nil
     )
 
     init(
@@ -41,7 +43,8 @@ struct ProxyConfig: Codable, Equatable {
         showMenuBarMetrics: Bool = true,
         appLanguage: AppLanguage = .system,
         autoCheckUpdates: Bool = true,
-        skippedUpdateVersion: String? = nil
+        skippedUpdateVersion: String? = nil,
+        skippedAntigravityVersion: String? = nil
     ) {
         self.host = host
         self.hookPort = hookPort
@@ -54,6 +57,7 @@ struct ProxyConfig: Codable, Equatable {
         self.appLanguage = appLanguage
         self.autoCheckUpdates = autoCheckUpdates
         self.skippedUpdateVersion = skippedUpdateVersion
+        self.skippedAntigravityVersion = skippedAntigravityVersion
     }
 
     init(from decoder: Decoder) throws {
@@ -72,6 +76,7 @@ struct ProxyConfig: Codable, Equatable {
         appLanguage = try container.decodeIfPresent(AppLanguage.self, forKey: .appLanguage) ?? .system
         autoCheckUpdates = try container.decodeIfPresent(Bool.self, forKey: .autoCheckUpdates) ?? true
         skippedUpdateVersion = try container.decodeIfPresent(String.self, forKey: .skippedUpdateVersion)
+        skippedAntigravityVersion = try container.decodeIfPresent(String.self, forKey: .skippedAntigravityVersion)
     }
 
     static func normalizeHost(_ raw: String) -> String {

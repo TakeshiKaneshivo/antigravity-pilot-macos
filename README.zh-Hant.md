@@ -57,7 +57,7 @@
 
 | 維度 | Antigravity Pilot for macOS |
 | :--- | :--- |
-| **原版應用** | `/Applications/Antigravity.app` **100% 唯讀不動**，官方簽章與目錄結構完全不受影響 |
+| **原版應用** | `/Applications/Antigravity.app` **預設唯讀不注入**；僅當你主動點擊「一鍵更新原版並重建」且新套件通過 SHA-512 與 Google 官方簽章校驗後才原子替換官方原套件 |
 | **網路代理** | **免 TUN 精準分流**：僅代理 Antigravity 及其子程序，區域網路 CIDR 直連繞過 |
 | **監控擷取** | **零 JS 注入、零 CDP**：純原生 SwiftUI 讀取本機常駐服務唯讀 RPC 與日誌歸檔 |
 | **應用內看板** | **官方 MCP Apps (SEP-1865)**：安裝至使用者外掛目錄，原版與代理版通用 |
@@ -135,7 +135,7 @@
 ### 更新 Pilot 與原版 Antigravity
 
 - **更新 Antigravity Pilot 本體**：點擊左側邊欄底部版本號可開啟軟體更新浮窗，支援自動偵測 GitHub Releases、直連/代理雙路由下載 DMG 並校驗 SHA-256 後原地替換重新啟動。
-- **更新原版 `/Applications/Antigravity.app`**：原版更新後，從 Dock 啟動代理副本會自動提示版本變化。先結束執行中的 Antigravity，再開啟 `/Applications/Antigravity Pilot.app` 重建副本即可，Dock 固定位置不變。
+- **更新原版 `/Applications/Antigravity.app`**：隔離代理副本已停用會因 Bundle ID 與簽章差異反覆失敗的內建 Squirrel 更新器；改為由 `Antigravity Pilot` 經本機代理偵測官方更新源，點擊 **一鍵更新原版並重建** 即可自動完成 SHA-512 與 Google 官方簽章校驗、優雅結束、原子替換原版並重建重新啟動副本（若手動更新了原版，Pilot 也會自動提示重建）。
 
 ### 停止背景程序
 

@@ -181,9 +181,22 @@ final class RuntimeBuilder {
             return false
         }
 
-        let sourceVersion = readBundleShortVersion(at: source.appendingPathComponent("Contents/Info.plist"))
-        let builtVersion = readEnvValue(key: "AG_SOURCE_VERSION", from: runtime.appendingPathComponent("Contents/Resources/proxy.env"))
+        let sourcePlist = source.appendingPathComponent("Contents/Info.plist")
+        let runtimeProxyEnv = runtime.appendingPathComponent("Contents/Resources/proxy.env")
+        let runtimeAppUpdateYML = runtime.appendingPathComponent("Contents/Resources/app-update.yml")
+        if fm.fileExists(atPath: runtimeAppUpdateYML.path) {
+            return false
+        }
+
+        let sourceVersion = readBundleShortVersion(at: sourcePlist)
+        let builtVersion = readEnvValue(key: "AG_SOURCE_VERSION", from: runtimeProxyEnv)
         if !sourceVersion.isEmpty && sourceVersion != builtVersion {
+            return false
+        }
+
+        let sourceBuild = readBundleVersion(at: sourcePlist)
+        let builtBuild = readEnvValue(key: "AG_SOURCE_BUILD", from: runtimeProxyEnv)
+        if !sourceBuild.isEmpty, let builtBuild, !builtBuild.isEmpty, sourceBuild != builtBuild {
             return false
         }
 
@@ -201,10 +214,12 @@ final class RuntimeBuilder {
         }
 
         try support.ensureRoot()
-        let sourceVersion = Self.readBundleShortVersion(at: support.sourceApp.appendingPathComponent("Contents/Info.plist"))
+        let sourcePlist = support.sourceApp.appendingPathComponent("Contents/Info.plist")
+        let sourceVersion = Self.readBundleShortVersion(at: sourcePlist)
+        let sourceBuild = Self.readBundleVersion(at: sourcePlist)
 
         progress(L10n.t("写入外置代理配置...", "Writing external proxy config...", config.appLanguage))
-        try Self.writeProxyEnv(config: config, to: support.externalProxyEnvURL, sourceVersion: nil)
+        try Self.writeProxyEnv(config: config, to: support.externalProxyEnvURL, sourceVersion: nil, sourceBuild: nil)
 
         if !forceRebuild && Self.canFastHotUpdate(config: config, support: support) {
             progress(L10n.t("极速热更新配置（免重建）...", "Fast hot-updating config...", config.appLanguage))
@@ -212,12 +227,12 @@ final class RuntimeBuilder {
             return .fastHotUpdated
         }
 
-        try rebuildRuntime(sourceVersion: sourceVersion)
+        try rebuildRuntime(sourceVersion: sourceVersion, sourceBuild: sourceBuild)
         try launchRuntimeApp()
         return .fullRebuilt
     }
 
-    private func rebuildRuntime(sourceVersion: String) throws {
+    private func rebuildRuntime(sourceVersion: String, sourceBuild: String) throws {
         let resources = try builderResources()
         let app = support.runtimeApp
         let stagingApp = support.runtimeRoot.appendingPathComponent(
@@ -250,7 +265,12 @@ final class RuntimeBuilder {
         try fileManager.copyItem(at: resources.launcher, to: launcherDest)
         try? fileManager.removeItem(at: dylibDest)
         try fileManager.copyItem(at: resources.dylib, to: dylibDest)
-        try Self.writeProxyEnv(config: config, to: appResources.appendingPathComponent("proxy.env"), sourceVersion: sourceVersion)
+        try Self.writeProxyEnv(
+            config: config,
+            to: appResources.appendingPathComponent("proxy.env"),
+            sourceVersion: sourceVersion,
+            sourceBuild: sourceBuild
+        )
         try run("/bin/chmod", ["+x", launcherDest.path])
 
         if config.useOriginalIcon {
@@ -270,6 +290,9 @@ final class RuntimeBuilder {
                 try updateAsarIntegrity(infoPlistURL: contents.appendingPathComponent("Info.plist"), asarHash: asarHash)
             }
         }
+
+        // Disable electron-updater / Squirrel inside the runtime copy so it never loops failing updates.
+        try? fileManager.removeItem(at: appResources.appendingPathComponent("app-update.yml"))
 
         let newIconFingerprint = iconFingerprint(for: stagingApp)
         let iconChanged = hadExistingRuntime && (previousIconFingerprint != newIconFingerprint)
@@ -295,6 +318,7 @@ final class RuntimeBuilder {
         if movedToBackup {
             try? fileManager.removeItem(at: backupApp)
         }
+        try? fileManager.removeItem(at: support.runtimeShipItCacheDirectory)
 
         refreshIconCaches(app: app, restartDock: iconChanged)
     }
@@ -337,6 +361,15 @@ final class RuntimeBuilder {
         guard let data = try? Data(contentsOf: plistURL),
               let plist = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? [String: Any],
               let version = plist["CFBundleShortVersionString"] as? String else {
+            return ""
+        }
+        return version.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    static func readBundleVersion(at plistURL: URL) -> String {
+        guard let data = try? Data(contentsOf: plistURL),
+              let plist = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? [String: Any],
+              let version = plist["CFBundleVersion"] as? String else {
             return ""
         }
         return version.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -388,10 +421,10 @@ final class RuntimeBuilder {
 
     static func writeExternalProxyEnv(config: ProxyConfig, support: AppSupport) throws {
         try support.ensureRoot()
-        try writeProxyEnv(config: config, to: support.externalProxyEnvURL, sourceVersion: nil)
+        try writeProxyEnv(config: config, to: support.externalProxyEnvURL, sourceVersion: nil, sourceBuild: nil)
     }
 
-    static func writeProxyEnv(config: ProxyConfig, to url: URL, sourceVersion: String?) throws {
+    static func writeProxyEnv(config: ProxyConfig, to url: URL, sourceVersion: String?, sourceBuild: String? = nil) throws {
         let noProxy = config.effectiveNoProxy
         var lines = [
             "AG_PROXY=\(config.hookProxyURL)",
@@ -410,6 +443,9 @@ final class RuntimeBuilder {
         ]
         if let sourceVersion, !sourceVersion.isEmpty {
             lines.append("AG_SOURCE_VERSION=\(sourceVersion)")
+        }
+        if let sourceBuild, !sourceBuild.isEmpty {
+            lines.append("AG_SOURCE_BUILD=\(sourceBuild)")
         }
         let contents = lines.joined(separator: "\n") + "\n"
         try contents.write(to: url, atomically: true, encoding: .utf8)
@@ -1022,10 +1058,20 @@ final class AppModel: ObservableObject {
         let lang = config.appLanguage
         let sourcePlist = support.sourceApp.appendingPathComponent("Contents/Info.plist")
         let sourceVersion = RuntimeBuilder.readBundleShortVersion(at: sourcePlist)
+        let sourceBuild = RuntimeBuilder.readBundleVersion(at: sourcePlist)
         let runtimeExists = FileManager.default.fileExists(atPath: support.runtimeApp.path)
+        let runtimeProxyEnv = support.runtimeApp.appendingPathComponent("Contents/Resources/proxy.env")
         let builtVersion = RuntimeBuilder.readEnvValue(
             key: "AG_SOURCE_VERSION",
-            from: support.runtimeApp.appendingPathComponent("Contents/Resources/proxy.env")
+            from: runtimeProxyEnv
+        )
+        let builtBuild = RuntimeBuilder.readEnvValue(
+            key: "AG_SOURCE_BUILD",
+            from: runtimeProxyEnv
+        )
+        let buildMismatch = !sourceBuild.isEmpty && !(builtBuild?.isEmpty ?? true) && builtBuild != sourceBuild
+        let hasLegacyUpdaterConfig = runtimeExists && FileManager.default.fileExists(
+            atPath: support.runtimeApp.appendingPathComponent("Contents/Resources/app-update.yml").path
         )
 
         guard !sourceVersion.isEmpty else {
@@ -1050,7 +1096,7 @@ final class AppModel: ObservableObject {
             runtimeStatusKind = .notBuilt
             canHotUpdate = false
         } else if let builtVersion, !builtVersion.isEmpty {
-            if builtVersion == sourceVersion {
+            if builtVersion == sourceVersion && !buildMismatch && !hasLegacyUpdaterConfig {
                 runtimeSummary = L10n.t(
                     zhHans: "原版 \(sourceVersion) · 代理副本已就绪 (\(builtVersion))",
                     zhHant: "原版 \(sourceVersion) · 代理副本已就緒 (\(builtVersion))",
@@ -1059,12 +1105,21 @@ final class AppModel: ObservableObject {
                     lang
                 )
                 runtimeStatusKind = .ready
-            } else {
+            } else if builtVersion != sourceVersion || buildMismatch {
                 runtimeSummary = L10n.t(
                     zhHans: "原版 \(sourceVersion) · 检测到更新（副本 \(builtVersion)），建议重建",
                     zhHant: "原版 \(sourceVersion) · 偵測到更新（副本 \(builtVersion)），建議重建",
                     en: "Source \(sourceVersion) · Update detected (copy \(builtVersion)), rebuild recommended",
                     ru: "Оригинал \(sourceVersion) · Есть обновление (копия \(builtVersion)), нужна пересборка",
+                    lang
+                )
+                runtimeStatusKind = .updateNeeded
+            } else {
+                runtimeSummary = L10n.t(
+                    zhHans: "原版 \(sourceVersion) · 需一次性重建以停用副本内报错循环",
+                    zhHant: "原版 \(sourceVersion) · 需一次性重建以停用副本內報錯迴圈",
+                    en: "Source \(sourceVersion) · One-time rebuild needed to disable broken copy updater",
+                    ru: "Оригинал \(sourceVersion) · Нужна разовая пересборка для отключения цикла ошибок",
                     lang
                 )
                 runtimeStatusKind = .updateNeeded

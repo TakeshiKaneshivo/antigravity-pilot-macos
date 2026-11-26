@@ -4,10 +4,15 @@ import SwiftUI
 struct ProxyConfigView: View {
     @Environment(\.appLanguage) private var lang
     @ObservedObject var appModel: AppModel
+    @ObservedObject var antigravityUpdateStore: AntigravityUpdateStore
     var onHideToMenuBar: () -> Void
     var onOpenTab: (MainTab) -> Void
 
     @State private var showHealthPopover = false
+
+    private var isBusy: Bool {
+        appModel.isWorking || antigravityUpdateStore.state.isBusy
+    }
 
     private struct PortPreset: Identifiable {
         let id: String
@@ -47,14 +52,18 @@ struct ProxyConfigView: View {
                     runningConflictBanner
                 }
 
+                if shouldShowAntigravityUpdateBanner {
+                    antigravityUpdateBanner
+                }
+
                 heroLaunchCard
 
                 EqualHeightTwoColumnLayout(spacing: 12, trailingWidth: 230) {
                     proxySettingsCard
-                        .disabled(appModel.isWorking)
+                        .disabled(isBusy)
 
                     iconStyleCard
-                        .disabled(appModel.isWorking)
+                        .disabled(isBusy)
                 }
 
                 quickActionsStrip
@@ -117,10 +126,14 @@ struct ProxyConfigView: View {
                                 systemImage: appModel.canHotUpdate ? "bolt.fill" : "shippingbox"
                             )
                         }
-                        Text(appModel.runtimeSummary)
-                            .font(.caption)
-                            .foregroundStyle(runtimeSummaryColor)
-                            .lineLimit(1)
+                        HStack(spacing: 6) {
+                            Text(appModel.runtimeSummary)
+                                .font(.caption)
+                                .foregroundStyle(runtimeSummaryColor)
+                                .lineLimit(1)
+
+                            antigravityCheckButton
+                        }
                     }
 
                     Spacer()
@@ -150,7 +163,7 @@ struct ProxyConfigView: View {
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
                     .keyboardShortcut(.defaultAction)
-                    .disabled(appModel.isWorking)
+                    .disabled(isBusy)
                 }
 
                 Divider()
@@ -387,7 +400,7 @@ struct ProxyConfigView: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
-                    .disabled(appModel.isUpdatingMcpPlugin || appModel.isWorking)
+                    .disabled(appModel.isUpdatingMcpPlugin || isBusy)
                 } else {
                     Button(L10n.t("管理 ›", "Manage ›", lang)) {
                         onOpenTab(.plugin)
@@ -403,7 +416,7 @@ struct ProxyConfigView: View {
 
                 Toggle(L10n.t("显示顶部菜单栏图标", "Show Menu Bar Icon", lang), isOn: $appModel.config.enableMenuBarMonitor)
                     .font(.callout)
-                    .disabled(appModel.isWorking)
+                    .disabled(isBusy)
                     .help(L10n.t(
                         "关闭后不显示 macOS 顶部菜单栏小图标；关闭主窗口将直接退出 Pilot。",
                         "Hide the macOS top menu bar icon; closing the main window will quit Pilot.",
@@ -536,8 +549,206 @@ struct ProxyConfigView: View {
                 .controlSize(.small)
                 .buttonStyle(.borderedProminent)
                 .tint(.orange)
-                .disabled(appModel.isWorking)
+                .disabled(isBusy)
             }
+        }
+    }
+
+    @ViewBuilder
+    private var antigravityCheckButton: some View {
+        if case .checking = antigravityUpdateStore.state {
+            ProgressView()
+                .controlSize(.mini)
+        } else if appModel.runtimeStatusKind != .missingSource {
+            Button {
+                antigravityUpdateStore.checkForUpdates(config: appModel.config, userInitiated: true)
+            } label: {
+                HStack(spacing: 3) {
+                    if case .upToDate = antigravityUpdateStore.state {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                        Text(L10n.t("已是最新", "Up to Date", lang))
+                            .foregroundStyle(.green)
+                    } else {
+                        Image(systemName: "arrow.down.circle")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .font(.caption2.weight(.medium))
+            }
+            .buttonStyle(.plain)
+            .disabled(isBusy)
+            .help(L10n.t("检查 Antigravity 官方更新", "Check for Antigravity updates", lang))
+        }
+    }
+
+    private var shouldShowAntigravityUpdateBanner: Bool {
+        switch antigravityUpdateStore.state {
+        case .available(_, let manifest, _, _):
+            return manifest.version != appModel.config.skippedAntigravityVersion
+        case .downloading, .verifying, .replacingAndRebuilding, .readyForManualInstall, .failed:
+            return true
+        case .idle, .checking, .upToDate:
+            return false
+        }
+    }
+
+    @ViewBuilder
+    private var antigravityUpdateBanner: some View {
+        switch antigravityUpdateStore.state {
+        case .available(let installedVersion, let manifest, let route, _):
+            PilotCard(padding: 9, accentTint: .blue) {
+                HStack(spacing: 10) {
+                    Image(systemName: "arrow.down.circle.fill")
+                        .font(.callout)
+                        .foregroundStyle(.blue)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 6) {
+                            Text(L10n.t(
+                                zhHans: "发现 Antigravity 新版 \(installedVersion) → \(manifest.version)",
+                                zhHant: "發現 Antigravity 新版 \(installedVersion) → \(manifest.version)",
+                                en: "Antigravity Update \(installedVersion) → \(manifest.version)",
+                                ru: "Доступен Antigravity \(installedVersion) → \(manifest.version)",
+                                lang
+                            ))
+                            .font(.callout.weight(.semibold))
+                            if let size = manifest.size, size > 0 {
+                                Text(ByteCountFormatter.string(fromByteCount: size, countStyle: .file))
+                                    .font(.caption2.monospacedDigit())
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        Text(route.localizedLabel(lang))
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Spacer(minLength: 8)
+
+                    Button(L10n.t("忽略", "Ignore", lang)) {
+                        appModel.config.skippedAntigravityVersion = manifest.version
+                        appModel.savePreferencesOnly()
+                    }
+                    .controlSize(.small)
+                    .buttonStyle(.bordered)
+                    .disabled(isBusy)
+
+                    Button(L10n.t("一键更新原版并重建", "Update & Rebuild", lang)) {
+                        antigravityUpdateStore.startUpdateAndRebuild(appModel: appModel) {
+                            onHideToMenuBar()
+                        }
+                    }
+                    .controlSize(.small)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(isBusy)
+                }
+            }
+
+        case .downloading(let manifest, let downloaded, let total, let route):
+            let fraction = total > 0 ? min(max(Double(downloaded) / Double(total), 0), 1) : 0
+            let percent = total > 0 ? Int((fraction * 100).rounded()) : 0
+            PilotCard(padding: 9, accentTint: .blue) {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text(L10n.t(
+                            zhHans: "正在下载 Antigravity \(manifest.version)...",
+                            zhHant: "正在下載 Antigravity \(manifest.version)...",
+                            en: "Downloading Antigravity \(manifest.version)...",
+                            ru: "Загрузка Antigravity \(manifest.version)...",
+                            lang
+                        ))
+                        .font(.callout.weight(.semibold))
+                        Spacer()
+                        let downloadedStr = ByteCountFormatter.string(fromByteCount: downloaded, countStyle: .file)
+                        let totalStr = total > 0 ? ByteCountFormatter.string(fromByteCount: total, countStyle: .file) : "…"
+                        Text("\(downloadedStr) / \(totalStr) (\(percent)%) · \(route.localizedLabel(lang))")
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                        Button(L10n.t("取消", "Cancel", lang)) {
+                            antigravityUpdateStore.cancelDownload()
+                        }
+                        .controlSize(.small)
+                        .buttonStyle(.bordered)
+                    }
+                    PilotLinearBar(fraction: fraction, tint: .blue, height: 6)
+                }
+            }
+
+        case .verifying(let manifest, let stage), .replacingAndRebuilding(let manifest, let stage):
+            PilotCard(padding: 9, accentTint: .blue) {
+                HStack(spacing: 10) {
+                    ProgressView()
+                        .controlSize(.small)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(L10n.t(
+                            zhHans: "正在更新 Antigravity \(manifest.version)",
+                            zhHant: "正在更新 Antigravity \(manifest.version)",
+                            en: "Updating Antigravity \(manifest.version)",
+                            ru: "Обновление Antigravity \(manifest.version)",
+                            lang
+                        ))
+                        .font(.callout.weight(.semibold))
+                        Text(stage)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                }
+            }
+
+        case .readyForManualInstall(_, _, let reason):
+            PilotCard(padding: 9, accentTint: .orange) {
+                HStack(spacing: 10) {
+                    Image(systemName: "folder.badge.gearshape")
+                        .foregroundStyle(.orange)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(L10n.t("需手动更新 Antigravity", "Manual Antigravity Update", lang))
+                            .font(.callout.weight(.semibold))
+                        Text(reason)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 8)
+                    Button(L10n.t("在 Finder 中显示", "Reveal in Finder", lang)) {
+                        antigravityUpdateStore.revealManualInstallerInFinder()
+                    }
+                    .controlSize(.small)
+                    .buttonStyle(.borderedProminent)
+                    .tint(.orange)
+                }
+            }
+
+        case .failed(let message, _):
+            PilotCard(padding: 9, accentTint: .red) {
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.red)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(L10n.t("Antigravity 更新失败", "Antigravity Update Failed", lang))
+                            .font(.callout.weight(.semibold))
+                        Text(message)
+                            .font(.caption2)
+                            .foregroundStyle(.red)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 8)
+                    Button(L10n.t("重试", "Retry", lang)) {
+                        antigravityUpdateStore.checkForUpdates(config: appModel.config, userInitiated: true)
+                    }
+                    .controlSize(.small)
+                    .buttonStyle(.bordered)
+                    Button(L10n.t("关闭", "Dismiss", lang)) {
+                        antigravityUpdateStore.dismissFailure()
+                    }
+                    .controlSize(.small)
+                    .buttonStyle(.borderless)
+                }
+            }
+
+        case .idle, .checking, .upToDate:
+            EmptyView()
         }
     }
 

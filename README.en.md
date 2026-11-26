@@ -57,7 +57,7 @@ A **zero-intrusion**, 100% native macOS companion for Antigravity. Route Antigra
 
 | Dimension | Antigravity Pilot for macOS |
 | :--- | :--- |
-| **Original App** | `/Applications/Antigravity.app` stays **100% read-only**, preserving official signatures and bundle structure |
+| **Original App** | `/Applications/Antigravity.app` stays **read-only with zero injection**; only replaced atomically with a verified official Google-signed bundle if you click **Update & Rebuild** |
 | **Proxy Routing** | **No-TUN Targeted Routing**: Proxies only Antigravity and its helpers while bypassing LAN CIDRs directly |
 | **Telemetry** | **Zero JS Injection, Zero CDP**: Native SwiftUI reads local daemon RPC and transcript logs |
 | **In-App Dashboard** | **Official MCP Apps (SEP-1865)**: Installed in user plugin space; works in both Original and Pilot |
@@ -135,7 +135,7 @@ Open `/Applications/Antigravity Pilot.app` to access five native tabs: **Proxy O
 ### Updating Pilot & Original Antigravity
 
 - **Updating Antigravity Pilot**: Click the version badge at the bottom of the sidebar to check GitHub Releases, download the DMG over direct/proxy routes, verify SHA-256, and update in place.
-- **Updating Original `/Applications/Antigravity.app`**: When the original app updates, launching the proxy copy from Dock warns of the version mismatch. Quit Antigravity, open `/Applications/Antigravity Pilot.app`, and rebuild—your Dock pin remains intact.
+- **Updating Original `/Applications/Antigravity.app`**: The isolated proxy copy disables the built-in Squirrel updater (which otherwise fails due to Bundle ID/signature mismatch). Instead, Pilot checks Google's official feed through your local proxy; click **Update & Rebuild** to verify SHA-512 + Google's Developer ID signature, quit running instances, atomically update `/Applications/Antigravity.app`, and rebuild & relaunch your proxy copy (manual updates to the original app are also detected automatically).
 
 ### Stop Background Processes
 

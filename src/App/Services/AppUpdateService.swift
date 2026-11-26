@@ -38,7 +38,7 @@ enum AppUpdateService {
         return cfg
     }
 
-    private static func candidateSessions(
+    static func candidateSessions(
         for url: URL,
         config: ProxyConfig,
         timeoutResource: TimeInterval

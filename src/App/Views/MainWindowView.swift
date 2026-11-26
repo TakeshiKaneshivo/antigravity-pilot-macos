@@ -79,6 +79,7 @@ struct MainWindowView: View {
     @ObservedObject var appModel: AppModel
     @ObservedObject var monitorStore: MonitorStore
     @ObservedObject var updateStore: UpdateStore
+    @ObservedObject var antigravityUpdateStore: AntigravityUpdateStore
     var onHideToMenuBar: () -> Void
 
     private static let sidebarCollapsedKey = "pilot.sidebarCollapsed"
@@ -128,6 +129,7 @@ struct MainWindowView: View {
                         case .proxy:
                             ProxyConfigView(
                                 appModel: appModel,
+                                antigravityUpdateStore: antigravityUpdateStore,
                                 onHideToMenuBar: onHideToMenuBar,
                                 onOpenTab: { selectedTab = $0 }
                             )
@@ -338,7 +340,9 @@ struct MainWindowView: View {
 
                 Spacer()
 
-                if tab == .plugin {
+                if tab == .proxy {
+                    proxySidebarBadge
+                } else if tab == .plugin {
                     pluginSidebarBadge
                 }
             }
@@ -356,6 +360,19 @@ struct MainWindowView: View {
         .buttonStyle(.plain)
         .onHover { hovering in
             hoveredTab = hovering ? tab : (hoveredTab == tab ? nil : hoveredTab)
+        }
+    }
+
+    @ViewBuilder
+    private var proxySidebarBadge: some View {
+        if antigravityUpdateStore.hasActionableUpdate(skippedVersion: appModel.config.skippedAntigravityVersion) {
+            Circle()
+                .fill(Color.blue)
+                .frame(width: 6.5, height: 6.5)
+        } else if appModel.runtimeStatusKind == .updateNeeded {
+            Circle()
+                .fill(Color.orange)
+                .frame(width: 6.5, height: 6.5)
         }
     }
 

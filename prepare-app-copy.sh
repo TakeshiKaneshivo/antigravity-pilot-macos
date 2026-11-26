@@ -90,6 +90,7 @@ chmod +x "$LAUNCHER_EXECUTABLE"
 cp "$ROOT/build/libantigravity_proxy.dylib" "$DEST_APP/Contents/Resources/libantigravity_proxy.dylib"
 
 SOURCE_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$SOURCE_APP/Contents/Info.plist" 2>/dev/null || true)"
+SOURCE_BUILD="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$SOURCE_APP/Contents/Info.plist" 2>/dev/null || true)"
 cat >"$DEST_APP/Contents/Resources/proxy.env" <<EOF
 AG_PROXY=$PROXY_URL
 AG_PROXY_LOG=0
@@ -106,6 +107,9 @@ NODE_USE_ENV_PROXY=1
 EOF
 if [[ -n "$SOURCE_VERSION" ]]; then
   printf 'AG_SOURCE_VERSION=%s\n' "$SOURCE_VERSION" >>"$DEST_APP/Contents/Resources/proxy.env"
+fi
+if [[ -n "$SOURCE_BUILD" ]]; then
+  printf 'AG_SOURCE_BUILD=%s\n' "$SOURCE_BUILD" >>"$DEST_APP/Contents/Resources/proxy.env"
 fi
 
 PROXY_ICON_NAME="antigravity-pilot.icns"
@@ -245,6 +249,9 @@ if [[ ! -s "$ENTITLEMENTS" ]]; then
 </plist>
 EOF
 fi
+
+# Remove Squirrel/electron-updater config so the isolated runtime copy does not loop failing updates.
+rm -f "$DEST_APP/Contents/Resources/app-update.yml"
 
 echo "Removing quarantine attributes if present..."
 xattr -dr com.apple.quarantine "$DEST_APP" 2>/dev/null || true
