@@ -232,7 +232,7 @@ final class StatusBarController: NSObject, NSPopoverDelegate, NSMenuDelegate {
         if statusItem == nil {
             let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
             if let button = item.button {
-                button.image = NSImage(systemSymbolName: "network.badge.shield.half.filled", accessibilityDescription: "Antigravity Pilot")
+                button.image = Self.makeStatusBarImage()
                 button.imagePosition = .imageLeading
                 button.target = self
                 button.action = #selector(handleStatusButtonClick(_:))
@@ -248,6 +248,16 @@ final class StatusBarController: NSObject, NSPopoverDelegate, NSMenuDelegate {
         } else {
             button.title = ""
         }
+    }
+
+    private static func makeStatusBarImage() -> NSImage? {
+        if let image = Bundle.main.image(forResource: NSImage.Name("menubar-icon")) {
+            image.size = NSSize(width: 18, height: 18)
+            image.isTemplate = true
+            image.accessibilityDescription = "Antigravity Pilot"
+            return image
+        }
+        return NSImage(systemSymbolName: "network.badge.shield.half.filled", accessibilityDescription: "Antigravity Pilot")
     }
 
     func closePopover() {
@@ -1174,12 +1184,75 @@ enum SmokeTestRunner {
                 try? plistData.write(to: mockRuntime.appendingPathComponent("Contents/Info.plist"))
             }
             try? Data("stale-icns-bytes".utf8).write(to: mockRuntimeRes.appendingPathComponent("antigravity-pilot.icns"))
-            let iconUpdatedEval = RuntimeBuilder.evaluateHotUpdate(config: ProxyConfig.defaultConfig, support: isolatedSupport)
+            let legacyDefaultEval = RuntimeBuilder.evaluateHotUpdate(config: ProxyConfig.defaultConfig, support: isolatedSupport)
             check(
-                iconUpdatedEval == .pilotIconUpdated,
-                "RuntimeBuilder.evaluateHotUpdate detects changed antigravity-pilot.icns as pilotIconUpdated"
+                legacyDefaultEval == .pilotIconUpdated,
+                "RuntimeBuilder.evaluateHotUpdate flags legacy runtime without AG_ICON_STYLE as pilotIconUpdated"
             )
+
+            try? "AG_SOURCE_VERSION=2.99.0\nAG_SOURCE_BUILD=2.99.0\nAG_ICON_STYLE=originalWithBadge\nAG_ICON_SOURCE_SHA256=deadbeef\n".write(
+                to: mockRuntimeRes.appendingPathComponent("proxy.env"),
+                atomically: true,
+                encoding: .utf8
+            )
+            let staleShaEval = RuntimeBuilder.evaluateHotUpdate(config: ProxyConfig.defaultConfig, support: isolatedSupport)
+            check(
+                staleShaEval == .pilotIconUpdated,
+                "RuntimeBuilder.evaluateHotUpdate detects changed icon.png SHA-256 as pilotIconUpdated"
+            )
+
+            var pilotCatCfg = ProxyConfig.defaultConfig
+            pilotCatCfg.runtimeIconStyle = .pilotCat
+            let styleSwitchEval = RuntimeBuilder.evaluateHotUpdate(config: pilotCatCfg, support: isolatedSupport)
+            check(
+                styleSwitchEval == .iconStyleChanged,
+                "RuntimeBuilder.evaluateHotUpdate detects switching runtimeIconStyle as iconStyleChanged"
+            )
+
+            let iconPNGURL = URL(fileURLWithPath: resPath).appendingPathComponent("icon.png")
+            if let iconData = try? Data(contentsOf: iconPNGURL) {
+                let iconSHA = SHA256.hash(data: iconData).map { String(format: "%02x", $0) }.joined()
+                try? "AG_SOURCE_VERSION=2.99.0\nAG_SOURCE_BUILD=2.99.0\nAG_ICON_STYLE=originalWithBadge\nAG_ICON_SOURCE_SHA256=\(iconSHA)\n".write(
+                    to: mockRuntimeRes.appendingPathComponent("proxy.env"),
+                    atomically: true,
+                    encoding: .utf8
+                )
+                let matchingShaEval = RuntimeBuilder.evaluateHotUpdate(config: ProxyConfig.defaultConfig, support: isolatedSupport)
+                check(
+                    matchingShaEval != .pilotIconUpdated && matchingShaEval != .iconStyleChanged,
+                    "RuntimeBuilder.evaluateHotUpdate does not false-trigger icon rebuild when style & icon SHA match"
+                )
+            }
+
+            if FileManager.default.fileExists(atPath: sourceApp.path) {
+                let composedCG = RuntimeIconComposer.composeOriginalWithBadgeCGImage(
+                    sourceApp: sourceApp,
+                    pilotIconPNG: iconPNGURL
+                )
+                check(
+                    composedCG?.width == 1024 && composedCG?.height == 1024,
+                    "RuntimeIconComposer composes 1024x1024 original+cat badge icon"
+                )
+            }
         }
+
+        // 21. ProxyConfig legacy useOriginalIcon & runtimeIconStyle compatibility
+        let legacyFalseJSON = Data(#"{"host":"127.0.0.1","hookPort":7890,"envScheme":"http","envPort":7890,"useOriginalIcon":false}"#.utf8)
+        let legacyTrueJSON = Data(#"{"host":"127.0.0.1","hookPort":7890,"envScheme":"http","envPort":7890,"useOriginalIcon":true}"#.utf8)
+        let decodedLegacyFalse = try? JSONDecoder().decode(ProxyConfig.self, from: legacyFalseJSON)
+        let decodedLegacyTrue = try? JSONDecoder().decode(ProxyConfig.self, from: legacyTrueJSON)
+        var encodedCatCfg = ProxyConfig.defaultConfig
+        encodedCatCfg.runtimeIconStyle = .pilotCat
+        let encodedCatData = try? JSONEncoder().encode(encodedCatCfg)
+        let roundTripCat = encodedCatData.flatMap { try? JSONDecoder().decode(ProxyConfig.self, from: $0) }
+        check(
+            decodedLegacyFalse?.runtimeIconStyle == .originalWithBadge
+                && decodedLegacyFalse?.useOriginalIcon == false
+                && decodedLegacyTrue?.runtimeIconStyle == .original
+                && decodedLegacyTrue?.useOriginalIcon == true
+                && roundTripCat?.runtimeIconStyle == .pilotCat,
+            "ProxyConfig migrates legacy useOriginalIcon and round-trips runtimeIconStyle"
+        )
 
         exit(tracker.hasFailed ? 1 : 0)
     }

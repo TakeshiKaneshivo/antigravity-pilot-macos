@@ -172,8 +172,8 @@ APP_PLIST="$DEST_APP/Contents/Info.plist"
   /usr/libexec/PlistBuddy -c 'Add :CFBundleExecutable string AntigravityProxyLauncher' "$APP_PLIST"
 /usr/libexec/PlistBuddy -c 'Set :CFBundleIdentifier com.google.antigravity.pilot.runtime' "$APP_PLIST" 2>/dev/null || \
   /usr/libexec/PlistBuddy -c 'Add :CFBundleIdentifier string com.google.antigravity.pilot.runtime' "$APP_PLIST"
-/usr/libexec/PlistBuddy -c 'Set :CFBundleDisplayName Antigravity Pilot' "$APP_PLIST" 2>/dev/null || \
-  /usr/libexec/PlistBuddy -c 'Add :CFBundleDisplayName string Antigravity Pilot' "$APP_PLIST"
+/usr/libexec/PlistBuddy -c 'Set :CFBundleDisplayName Antigravity (Pilot)' "$APP_PLIST" 2>/dev/null || \
+  /usr/libexec/PlistBuddy -c 'Add :CFBundleDisplayName string Antigravity (Pilot)' "$APP_PLIST"
 if [[ -f "$PROXY_ICON_PATH" ]]; then
   /usr/libexec/PlistBuddy -c "Set :CFBundleIconFile $PROXY_ICON_NAME" "$APP_PLIST" 2>/dev/null || \
     /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string $PROXY_ICON_NAME" "$APP_PLIST"

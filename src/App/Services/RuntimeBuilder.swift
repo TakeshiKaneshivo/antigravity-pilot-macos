@@ -1,7 +1,9 @@
 import AppKit
 import CryptoKit
 import Foundation
+import ImageIO
 import ServiceManagement
+import UniformTypeIdentifiers
 
 struct RunningInstanceInfo: Identifiable, Equatable {
     enum Kind: String {
@@ -144,6 +146,124 @@ struct BuilderResources {
 struct RuntimeIcon {
     let name: String
     let icns: URL
+}
+
+enum RuntimeIconComposer {
+    static func loadLargestCGImage(from url: URL) -> CGImage? {
+        guard let img = NSImage(contentsOf: url) else { return nil }
+        let reps = img.representations.compactMap { $0 as? NSBitmapImageRep }
+        if let best = reps.max(by: { $0.pixelsWide < $1.pixelsWide }), let cg = best.cgImage {
+            return cg
+        }
+        var proposed = NSRect(origin: .zero, size: img.size)
+        return img.cgImage(forProposedRect: &proposed, context: nil, hints: nil)
+    }
+
+    static func loadOriginalSourceCGImage(sourceApp: URL) -> CGImage? {
+        let icnsURL = sourceApp.appendingPathComponent("Contents/Resources/icon.icns")
+        if let cg = loadLargestCGImage(from: icnsURL) {
+            return cg
+        }
+        guard FileManager.default.fileExists(atPath: sourceApp.path) else { return nil }
+        let fallback = NSWorkspace.shared.icon(forFile: sourceApp.path)
+        let reps = fallback.representations.compactMap { $0 as? NSBitmapImageRep }
+        if let best = reps.max(by: { $0.pixelsWide < $1.pixelsWide }), let cg = best.cgImage {
+            return cg
+        }
+        var proposed = NSRect(origin: .zero, size: fallback.size)
+        return fallback.cgImage(forProposedRect: &proposed, context: nil, hints: nil)
+    }
+
+    static func composeOriginalWithBadgeCGImage(sourceApp: URL, pilotIconPNG: URL) -> CGImage? {
+        guard let origCG = loadOriginalSourceCGImage(sourceApp: sourceApp),
+              let pilotCG = loadLargestCGImage(from: pilotIconPNG) else {
+            return nil
+        }
+
+        let size = 1024
+        guard let cs = CGColorSpace(name: CGColorSpace.sRGB),
+              let cg = CGContext(
+                data: nil,
+                width: size,
+                height: size,
+                bitsPerComponent: 8,
+                bytesPerRow: 0,
+                space: cs,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+              ) else {
+            return nil
+        }
+
+        cg.clear(CGRect(x: 0, y: 0, width: size, height: size))
+        cg.interpolationQuality = .high
+        cg.draw(origCG, in: CGRect(x: 0, y: 0, width: size, height: size))
+
+        // Crop the cat's face tightly from inside the 824x824 squircle so no outer squircle edge leaks into the circular badge.
+        let cropRect = CGRect(
+            x: CGFloat(pilotCG.width) * 0.184,
+            y: CGFloat(pilotCG.height) * 0.141,
+            width: CGFloat(pilotCG.width) * 0.582,
+            height: CGFloat(pilotCG.height) * 0.582
+        )
+        let badgeArt = pilotCG.cropping(to: cropRect) ?? pilotCG
+
+        let center = CGPoint(x: 760, y: 264)
+        let outerRadius: CGFloat = 176
+        let borderWidth: CGFloat = 18
+        let outerRect = CGRect(x: center.x - outerRadius, y: center.y - outerRadius, width: outerRadius * 2, height: outerRadius * 2)
+        let innerRadius = outerRadius - borderWidth
+        let innerRect = CGRect(x: center.x - innerRadius, y: center.y - innerRadius, width: innerRadius * 2, height: innerRadius * 2)
+
+        cg.saveGState()
+        cg.setShadow(offset: CGSize(width: 0, height: -8), blur: 20, color: CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 0.28))
+        cg.setFillColor(CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1))
+        cg.fillEllipse(in: outerRect)
+        cg.restoreGState()
+
+        cg.saveGState()
+        cg.setStrokeColor(CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 0.14))
+        cg.setLineWidth(2.0)
+        cg.strokeEllipse(in: outerRect.insetBy(dx: 1, dy: 1))
+        cg.restoreGState()
+
+        cg.saveGState()
+        cg.addEllipse(in: innerRect)
+        cg.clip()
+        cg.setFillColor(CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1))
+        cg.fill(innerRect)
+        cg.interpolationQuality = .high
+        cg.draw(badgeArt, in: innerRect)
+        cg.restoreGState()
+
+        cg.saveGState()
+        cg.setStrokeColor(CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 0.08))
+        cg.setLineWidth(1.5)
+        cg.strokeEllipse(in: innerRect)
+        cg.restoreGState()
+
+        return cg.makeImage()
+    }
+
+    static func composeOriginalWithBadgeNSImage(sourceApp: URL, pilotIconPNG: URL) -> NSImage? {
+        guard let cg = composeOriginalWithBadgeCGImage(sourceApp: sourceApp, pilotIconPNG: pilotIconPNG) else {
+            return nil
+        }
+        let rep = NSBitmapImageRep(cgImage: cg)
+        rep.size = NSSize(width: 1024, height: 1024)
+        let img = NSImage(size: NSSize(width: 1024, height: 1024))
+        img.addRepresentation(rep)
+        return img
+    }
+
+    static func writePNG(_ cgImage: CGImage, to url: URL) throws {
+        guard let dest = CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil) else {
+            throw BuilderError.commandFailed("Failed to create PNG destination: \(url.path)")
+        }
+        CGImageDestinationAddImage(dest, cgImage, nil)
+        guard CGImageDestinationFinalize(dest) else {
+            throw BuilderError.commandFailed("Failed to finalize PNG: \(url.path)")
+        }
+    }
 }
 
 enum HotUpdateCheckResult: Equatable, Sendable {
@@ -307,10 +427,10 @@ enum HotUpdateCheckResult: Equatable, Sendable {
             )
         case .iconStyleChanged:
             return L10n.t(
-                zhHans: "应用图标样式已切换（Pilot 标识 ↔ 原版图标），需重新打包并签名代理副本生效。",
-                zhHant: "應用圖示樣式已切換（Pilot 識別 ↔ 原版圖示），需重新打包並簽署代理副本生效。",
-                en: "App icon style changed (Pilot Icon vs Original). Rebuild and re-sign the runtime copy to apply.",
-                ru: "Изменён стиль значка (Pilot / Оригинал) — требуется пересборка и переподпись копии.",
+                zhHans: "应用图标样式已切换，需重新打包并签名代理副本生效。",
+                zhHant: "應用圖示樣式已切換，需重新打包並簽署代理副本生效。",
+                en: "App icon style changed. Rebuild and re-sign the runtime copy to apply.",
+                ru: "Изменён стиль значка — требуется пересборка и переподпись копии.",
                 lang
             )
         case .pilotIconUpdated:
@@ -395,17 +515,33 @@ final class RuntimeBuilder {
             return .sourceVersionChanged
         }
 
-        let runtimeUsesOriginal = isRuntimeUsingOriginalIcon(app: runtime)
-        if runtimeUsesOriginal != config.useOriginalIcon {
+        let recordedIconStyle = readEnvValue(key: "AG_ICON_STYLE", from: runtimeProxyEnv)
+            .flatMap(RuntimeIconStyle.init(rawValue:))
+        let runtimeStyle: RuntimeIconStyle = recordedIconStyle ?? (isRuntimeUsingOriginalIcon(app: runtime) ? .original : .pilotCat)
+
+        if runtimeStyle != config.runtimeIconStyle {
+            if recordedIconStyle == nil && runtimeStyle != .original && config.runtimeIconStyle != .original {
+                return .pilotIconUpdated
+            }
             return .iconStyleChanged
         }
 
-        if !config.useOriginalIcon {
-            let builderIconICNS = builderBase.appendingPathComponent("antigravity-pilot.icns")
-            let runtimeIconICNS = runtime.appendingPathComponent("Contents/Resources/antigravity-pilot.icns")
-            if fm.fileExists(atPath: builderIconICNS.path),
-               sha256File(builderIconICNS) != sha256File(runtimeIconICNS) {
-                return .pilotIconUpdated
+        if config.runtimeIconStyle != .original {
+            let builderIconPNG = builderBase.appendingPathComponent("icon.png")
+            if let recordedIconSHA = readEnvValue(key: "AG_ICON_SOURCE_SHA256", from: runtimeProxyEnv) {
+                if let currentIconSHA = sha256File(builderIconPNG), recordedIconSHA != currentIconSHA {
+                    return .pilotIconUpdated
+                }
+            } else {
+                if config.runtimeIconStyle == .originalWithBadge {
+                    return .pilotIconUpdated
+                }
+                let builderIconICNS = builderBase.appendingPathComponent("antigravity-pilot.icns")
+                let runtimeIconICNS = runtime.appendingPathComponent("Contents/Resources/antigravity-pilot.icns")
+                if fm.fileExists(atPath: builderIconICNS.path),
+                   sha256File(builderIconICNS) != sha256File(runtimeIconICNS) {
+                    return .pilotIconUpdated
+                }
             }
         }
 
@@ -473,18 +609,23 @@ final class RuntimeBuilder {
         try fileManager.copyItem(at: resources.launcher, to: launcherDest)
         try? fileManager.removeItem(at: dylibDest)
         try fileManager.copyItem(at: resources.dylib, to: dylibDest)
+        let iconSourceSHA256 = (config.runtimeIconStyle == .original) ? nil : Self.sha256File(resources.iconPNG)
         try Self.writeProxyEnv(
             config: config,
             to: appResources.appendingPathComponent("proxy.env"),
             sourceVersion: sourceVersion,
-            sourceBuild: sourceBuild
+            sourceBuild: sourceBuild,
+            iconStyle: config.runtimeIconStyle,
+            iconSourceSHA256: iconSourceSHA256
         )
         try run("/bin/chmod", ["+x", launcherDest.path])
 
-        if config.useOriginalIcon {
+        switch config.runtimeIconStyle {
+        case .original:
             progress(L10n.t("修改 bundle 信息（保留原版图标）...", "Updating bundle info (original icon)...", lang))
             try configureRuntimeApp(app: stagingApp, icon: nil)
-        } else {
+
+        case .pilotCat:
             progress(L10n.t("生成图标...", "Generating app icon...", lang))
             let icon = try prepareIcon(resources: resources, appResources: appResources)
 
@@ -495,6 +636,39 @@ final class RuntimeBuilder {
             let asar = appResources.appendingPathComponent("app.asar")
             if fileManager.fileExists(atPath: asar.path) {
                 let asarHash = try AsarIconPatcher.patch(asarURL: asar, iconURL: resources.iconPNG)
+                try updateAsarIntegrity(infoPlistURL: contents.appendingPathComponent("Info.plist"), asarHash: asarHash)
+            }
+
+        case .originalWithBadge:
+            progress(L10n.t("合成代理副本图标...", "Compositing runtime icon...", lang))
+            let tempBadgedPNG = fileManager.temporaryDirectory
+                .appendingPathComponent("antigravity-pilot-badged-\(UUID().uuidString).png")
+            defer { try? fileManager.removeItem(at: tempBadgedPNG) }
+
+            let effectivePNG: URL
+            if let composedCG = RuntimeIconComposer.composeOriginalWithBadgeCGImage(
+                sourceApp: support.sourceApp,
+                pilotIconPNG: resources.iconPNG
+            ) {
+                try RuntimeIconComposer.writePNG(composedCG, to: tempBadgedPNG)
+                effectivePNG = tempBadgedPNG
+            } else {
+                effectivePNG = resources.iconPNG
+            }
+
+            let iconName = "antigravity-pilot.icns"
+            let iconURL = appResources.appendingPathComponent(iconName)
+            try? fileManager.removeItem(at: iconURL)
+            try generateICNS(from: effectivePNG, to: iconURL)
+            let icon = RuntimeIcon(name: iconName, icns: iconURL)
+
+            progress(L10n.t("修改 bundle 信息...", "Updating bundle info...", lang))
+            try configureRuntimeApp(app: stagingApp, icon: icon)
+
+            progress(L10n.t("Patch Electron 图标...", "Patching Electron icon...", lang))
+            let asar = appResources.appendingPathComponent("app.asar")
+            if fileManager.fileExists(atPath: asar.path) {
+                let asarHash = try AsarIconPatcher.patch(asarURL: asar, iconURL: effectivePNG)
                 try updateAsarIntegrity(infoPlistURL: contents.appendingPathComponent("Info.plist"), asarHash: asarHash)
             }
         }
@@ -634,7 +808,14 @@ final class RuntimeBuilder {
         try writeProxyEnv(config: config, to: support.externalProxyEnvURL, sourceVersion: nil, sourceBuild: nil)
     }
 
-    static func writeProxyEnv(config: ProxyConfig, to url: URL, sourceVersion: String?, sourceBuild: String? = nil) throws {
+    static func writeProxyEnv(
+        config: ProxyConfig,
+        to url: URL,
+        sourceVersion: String?,
+        sourceBuild: String? = nil,
+        iconStyle: RuntimeIconStyle? = nil,
+        iconSourceSHA256: String? = nil
+    ) throws {
         let noProxy = config.effectiveNoProxy
         var lines = [
             "AG_PROXY=\(config.hookProxyURL)",
@@ -656,6 +837,12 @@ final class RuntimeBuilder {
         }
         if let sourceBuild, !sourceBuild.isEmpty {
             lines.append("AG_SOURCE_BUILD=\(sourceBuild)")
+        }
+        if let iconStyle {
+            lines.append("AG_ICON_STYLE=\(iconStyle.rawValue)")
+        }
+        if let iconSourceSHA256, !iconSourceSHA256.isEmpty {
+            lines.append("AG_ICON_SOURCE_SHA256=\(iconSourceSHA256)")
         }
         let contents = lines.joined(separator: "\n") + "\n"
         try contents.write(to: url, atomically: true, encoding: .utf8)
@@ -735,7 +922,7 @@ final class RuntimeBuilder {
         let info = app.appendingPathComponent("Contents/Info.plist")
         try plistSetOrAdd(info, "CFBundleExecutable", "AntigravityProxyLauncher")
         try plistSetOrAdd(info, "CFBundleIdentifier", "com.google.antigravity.pilot.runtime")
-        try plistSetOrAdd(info, "CFBundleDisplayName", "Antigravity Pilot")
+        try plistSetOrAdd(info, "CFBundleDisplayName", "Antigravity (Pilot)")
         plistDeleteIfExists(info, "CFBundleIconName")
         if let icon {
             try plistSetOrAdd(info, "CFBundleIconFile", icon.name)
@@ -1212,6 +1399,18 @@ final class AppModel: ObservableObject {
         return NSApplication.shared.applicationIconImage
     }()
 
+    private lazy var cachedBadgedIcon: NSImage = {
+        if let iconPNG = Bundle.main.resourceURL?.appendingPathComponent("icon.png"),
+           FileManager.default.fileExists(atPath: iconPNG.path),
+           let composed = RuntimeIconComposer.composeOriginalWithBadgeNSImage(
+               sourceApp: support.sourceApp,
+               pilotIconPNG: iconPNG
+           ) {
+            return composed
+        }
+        return NSApplication.shared.applicationIconImage
+    }()
+
     var pilotAppIcon: NSImage {
         NSApplication.shared.applicationIconImage
     }
@@ -1220,8 +1419,19 @@ final class AppModel: ObservableObject {
         cachedOriginalIcon
     }
 
+    var badgedRuntimeIcon: NSImage {
+        cachedBadgedIcon
+    }
+
     var previewIcon: NSImage {
-        config.useOriginalIcon ? cachedOriginalIcon : NSApplication.shared.applicationIconImage
+        switch config.runtimeIconStyle {
+        case .originalWithBadge:
+            return cachedBadgedIcon
+        case .pilotCat:
+            return NSApplication.shared.applicationIconImage
+        case .original:
+            return cachedOriginalIcon
+        }
     }
 
     var appVersionText: String {
@@ -1324,10 +1534,10 @@ final class AppModel: ObservableObject {
                 runtimeStatusKind = .ready
             } else if builtVersion != sourceVersion || buildMismatch {
                 runtimeSummary = L10n.t(
-                    zhHans: "原版 \(sourceVersion) · 检测到更新（副本 \(builtVersion)），建议重建",
-                    zhHant: "原版 \(sourceVersion) · 偵測到更新（副本 \(builtVersion)），建議重建",
-                    en: "Source \(sourceVersion) · Update detected (copy \(builtVersion)), rebuild recommended",
-                    ru: "Оригинал \(sourceVersion) · Есть обновление (копия \(builtVersion)), нужна пересборка",
+                    zhHans: "原版 \(sourceVersion) · 副本 \(builtVersion)（需重建）",
+                    zhHant: "原版 \(sourceVersion) · 副本 \(builtVersion)（需重建）",
+                    en: "Source \(sourceVersion) · Copy \(builtVersion) (rebuild needed)",
+                    ru: "Оригинал \(sourceVersion) · Копия \(builtVersion) (пересборка)",
                     lang
                 )
                 runtimeStatusKind = .updateNeeded

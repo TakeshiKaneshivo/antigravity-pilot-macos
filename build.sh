@@ -192,6 +192,11 @@ if command -v "$SWIFTC" >/dev/null 2>&1; then
   cp "$BUILD_DIR/antigravity-pilot-mcp" "$APP_RESOURCES/antigravity-pilot-mcp"
   cp "$MCP_HTML" "$APP_RESOURCES/pilot-mcp-dashboard.html"
   cp "$ROOT/icon.png" "$APP_RESOURCES/icon.png"
+  if [[ -f "$ROOT/menubar-icon.png" ]]; then
+    sips -z 18 18 "$ROOT/menubar-icon.png" --out "$APP_RESOURCES/menubar-icon.png" >/dev/null
+    sips -z 36 36 "$ROOT/menubar-icon.png" --out "$APP_RESOURCES/menubar-icon@2x.png" >/dev/null
+    sips -z 54 54 "$ROOT/menubar-icon.png" --out "$APP_RESOURCES/menubar-icon@3x.png" >/dev/null
+  fi
   chmod +x "$APP_RESOURCES/antigravity-pilot-mcp"
 
   ICONSET="$BUILD_DIR/antigravity-pilot.iconset"

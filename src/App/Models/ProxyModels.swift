@@ -1,6 +1,12 @@
 import Darwin
 import Foundation
 
+enum RuntimeIconStyle: String, Codable, Equatable, CaseIterable, Sendable {
+    case originalWithBadge
+    case pilotCat
+    case original
+}
+
 struct ProxyConfig: Codable, Equatable {
     static let defaultNoProxy = "localhost,127.0.0.1,::1,127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,*.local,<local>"
 
@@ -8,7 +14,7 @@ struct ProxyConfig: Codable, Equatable {
     var hookPort: Int
     var envScheme: String
     var envPort: Int
-    var useOriginalIcon: Bool
+    var runtimeIconStyle: RuntimeIconStyle
     var noProxy: String
     var enableMenuBarMonitor: Bool
     var showMenuBarMetrics: Bool
@@ -17,12 +23,17 @@ struct ProxyConfig: Codable, Equatable {
     var skippedUpdateVersion: String?
     var skippedAntigravityVersion: String?
 
+    var useOriginalIcon: Bool {
+        get { runtimeIconStyle == .original }
+        set { runtimeIconStyle = newValue ? .original : .originalWithBadge }
+    }
+
     static let defaultConfig = ProxyConfig(
         host: "127.0.0.1",
         hookPort: 7890,
         envScheme: "http",
         envPort: 7890,
-        useOriginalIcon: false,
+        runtimeIconStyle: .originalWithBadge,
         noProxy: defaultNoProxy,
         enableMenuBarMonitor: true,
         showMenuBarMetrics: true,
@@ -37,7 +48,7 @@ struct ProxyConfig: Codable, Equatable {
         hookPort: Int,
         envScheme: String,
         envPort: Int,
-        useOriginalIcon: Bool = false,
+        runtimeIconStyle: RuntimeIconStyle = .originalWithBadge,
         noProxy: String = ProxyConfig.defaultNoProxy,
         enableMenuBarMonitor: Bool = true,
         showMenuBarMetrics: Bool = true,
@@ -50,7 +61,7 @@ struct ProxyConfig: Codable, Equatable {
         self.hookPort = hookPort
         self.envScheme = envScheme
         self.envPort = envPort
-        self.useOriginalIcon = useOriginalIcon
+        self.runtimeIconStyle = runtimeIconStyle
         self.noProxy = noProxy
         self.enableMenuBarMonitor = enableMenuBarMonitor
         self.showMenuBarMetrics = showMenuBarMetrics
@@ -60,13 +71,34 @@ struct ProxyConfig: Codable, Equatable {
         self.skippedAntigravityVersion = skippedAntigravityVersion
     }
 
+    private enum CodingKeys: String, CodingKey {
+        case host
+        case hookPort
+        case envScheme
+        case envPort
+        case runtimeIconStyle
+        case useOriginalIcon
+        case noProxy
+        case enableMenuBarMonitor
+        case showMenuBarMetrics
+        case appLanguage
+        case autoCheckUpdates
+        case skippedUpdateVersion
+        case skippedAntigravityVersion
+    }
+
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         host = try container.decode(String.self, forKey: .host)
         hookPort = try container.decode(Int.self, forKey: .hookPort)
         envScheme = try container.decode(String.self, forKey: .envScheme)
         envPort = try container.decode(Int.self, forKey: .envPort)
-        useOriginalIcon = try container.decodeIfPresent(Bool.self, forKey: .useOriginalIcon) ?? false
+        if let style = try container.decodeIfPresent(RuntimeIconStyle.self, forKey: .runtimeIconStyle) {
+            runtimeIconStyle = style
+        } else {
+            let legacyOriginal = try container.decodeIfPresent(Bool.self, forKey: .useOriginalIcon) ?? false
+            runtimeIconStyle = legacyOriginal ? .original : .originalWithBadge
+        }
         let decodedNoProxy = try container.decodeIfPresent(String.self, forKey: .noProxy)
         noProxy = (decodedNoProxy?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false)
             ? decodedNoProxy!
@@ -77,6 +109,23 @@ struct ProxyConfig: Codable, Equatable {
         autoCheckUpdates = try container.decodeIfPresent(Bool.self, forKey: .autoCheckUpdates) ?? true
         skippedUpdateVersion = try container.decodeIfPresent(String.self, forKey: .skippedUpdateVersion)
         skippedAntigravityVersion = try container.decodeIfPresent(String.self, forKey: .skippedAntigravityVersion)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(host, forKey: .host)
+        try container.encode(hookPort, forKey: .hookPort)
+        try container.encode(envScheme, forKey: .envScheme)
+        try container.encode(envPort, forKey: .envPort)
+        try container.encode(runtimeIconStyle, forKey: .runtimeIconStyle)
+        try container.encode(useOriginalIcon, forKey: .useOriginalIcon)
+        try container.encode(noProxy, forKey: .noProxy)
+        try container.encode(enableMenuBarMonitor, forKey: .enableMenuBarMonitor)
+        try container.encode(showMenuBarMetrics, forKey: .showMenuBarMetrics)
+        try container.encode(appLanguage, forKey: .appLanguage)
+        try container.encode(autoCheckUpdates, forKey: .autoCheckUpdates)
+        try container.encodeIfPresent(skippedUpdateVersion, forKey: .skippedUpdateVersion)
+        try container.encodeIfPresent(skippedAntigravityVersion, forKey: .skippedAntigravityVersion)
     }
 
     static func normalizeHost(_ raw: String) -> String {

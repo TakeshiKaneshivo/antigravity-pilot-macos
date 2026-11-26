@@ -268,6 +268,7 @@ final class PilotMCPService: MCPServiceHandling, @unchecked Sendable {
             "hookProxyURL": config.hookProxyURL,
             "envProxyURL": config.envProxyURL,
             "noProxy": config.effectiveNoProxy,
+            "runtimeIconStyle": config.runtimeIconStyle.rawValue,
             "useOriginalIcon": config.useOriginalIcon,
             "appLanguage": config.appLanguage.rawValue,
             "resolvedLanguage": config.appLanguage.resolved.rawValue

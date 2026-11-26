@@ -59,7 +59,7 @@ struct ProxyConfigView: View {
 
                 heroLaunchCard
 
-                EqualHeightTwoColumnLayout(spacing: 12, trailingWidth: 230) {
+                EqualHeightTwoColumnLayout(spacing: 12, trailingWidth: 256) {
                     proxySettingsCard
                         .disabled(isBusy)
 
@@ -87,7 +87,7 @@ struct ProxyConfigView: View {
         .onChange(of: appModel.config.envPort) { _ in
             appModel.scheduleProxyHealthCheck()
         }
-        .onChange(of: appModel.config.useOriginalIcon) { _ in
+        .onChange(of: appModel.config.runtimeIconStyle) { _ in
             appModel.refreshRuntimeStatus()
         }
         .onChange(of: appModel.config.enableMenuBarMonitor) { _ in
@@ -111,7 +111,7 @@ struct ProxyConfigView: View {
                 HStack(spacing: 12) {
                     Image(nsImage: PilotIconCache.baked(
                         appModel.previewIcon,
-                        key: appModel.config.useOriginalIcon ? "preview-original" : "preview-pilot",
+                        key: "preview-\(appModel.config.runtimeIconStyle.rawValue)",
                         side: 44,
                         cornerRadius: 10,
                         shadowBlur: 6,
@@ -284,32 +284,72 @@ struct ProxyConfigView: View {
                 Label(L10n.t("应用图标样式", "App Icon Style", lang), systemImage: "app.badge")
                     .font(.subheadline.weight(.semibold))
 
-                VStack(spacing: 0) {
-                    Spacer(minLength: 0)
-
-                    HStack(spacing: 8) {
-                        iconPreviewOption(
-                            cacheKey: "option-pilot",
-                            title: L10n.t("Pilot 标识", "Pilot Icon", lang),
-                            caption: L10n.t("Dock 易区分", "Distinct", lang),
-                            image: appModel.pilotAppIcon,
-                            selected: !appModel.config.useOriginalIcon
-                        ) {
-                            appModel.config.useOriginalIcon = false
-                        }
-
-                        iconPreviewOption(
-                            cacheKey: "option-original",
-                            title: L10n.t("原版图标", "Original", lang),
-                            caption: L10n.t("原汁原味", "Classic", lang),
-                            image: appModel.originalAppIcon,
-                            selected: appModel.config.useOriginalIcon
-                        ) {
-                            appModel.config.useOriginalIcon = true
-                        }
+                VStack(spacing: 6) {
+                    iconPreviewRow(
+                        cacheKey: "option-badged",
+                        title: L10n.t(
+                            zhHans: "原版 + 彩虹猫",
+                            zhHant: "原版 + 彩虹貓",
+                            en: "Original + Cat",
+                            ru: "Оригинал + Кот",
+                            lang
+                        ),
+                        caption: L10n.t(
+                            zhHans: "三者零撞脸（推荐）",
+                            zhHant: "三者零撞臉（推薦）",
+                            en: "Distinct from both (Recommended)",
+                            ru: "Не путается с другими (Реком.)",
+                            lang
+                        ),
+                        image: appModel.badgedRuntimeIcon,
+                        selected: appModel.config.runtimeIconStyle == .originalWithBadge
+                    ) {
+                        appModel.config.runtimeIconStyle = .originalWithBadge
                     }
 
-                    Spacer(minLength: 0)
+                    iconPreviewRow(
+                        cacheKey: "option-pilot-cat",
+                        title: L10n.t(
+                            zhHans: "纯净彩虹猫",
+                            zhHant: "純淨彩虹貓",
+                            en: "Pure Rainbow Cat",
+                            ru: "Радужный кот",
+                            lang
+                        ),
+                        caption: L10n.t(
+                            zhHans: "与伴侣同款大猫图标",
+                            zhHant: "與伴侶同款大貓圖示",
+                            en: "Same mascot as Pilot",
+                            ru: "Как значок Pilot",
+                            lang
+                        ),
+                        image: appModel.pilotAppIcon,
+                        selected: appModel.config.runtimeIconStyle == .pilotCat
+                    ) {
+                        appModel.config.runtimeIconStyle = .pilotCat
+                    }
+
+                    iconPreviewRow(
+                        cacheKey: "option-original",
+                        title: L10n.t(
+                            zhHans: "原版图标",
+                            zhHant: "原版圖示",
+                            en: "Original Icon",
+                            ru: "Оригинальный",
+                            lang
+                        ),
+                        caption: L10n.t(
+                            zhHans: "保持官方原汁原味",
+                            zhHant: "保持官方原汁原味",
+                            en: "Classic Antigravity look",
+                            ru: "Классический вид",
+                            lang
+                        ),
+                        image: appModel.originalAppIcon,
+                        selected: appModel.config.runtimeIconStyle == .original
+                    ) {
+                        appModel.config.runtimeIconStyle = .original
+                    }
                 }
 
                 Text(L10n.t(
@@ -325,7 +365,7 @@ struct ProxyConfigView: View {
         }
     }
 
-    private func iconPreviewOption(
+    private func iconPreviewRow(
         cacheKey: String,
         title: String,
         caption: String,
@@ -334,49 +374,49 @@ struct ProxyConfigView: View {
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
-            VStack(spacing: 4) {
-                ZStack(alignment: .topTrailing) {
-                    Image(nsImage: PilotIconCache.baked(
-                        image,
-                        key: cacheKey,
-                        side: 42,
-                        cornerRadius: 10,
-                        shadowBlur: 4.5,
-                        shadowYOffset: 1,
-                        shadowAlpha: 0.12
-                    ))
-                    .frame(width: 42 + PilotIconCache.margin * 2, height: 42 + PilotIconCache.margin * 2)
-                    .padding(-PilotIconCache.margin)
-                    .padding(4)
+            HStack(spacing: 9) {
+                Image(nsImage: PilotIconCache.baked(
+                    image,
+                    key: cacheKey,
+                    side: 32,
+                    cornerRadius: 8,
+                    shadowBlur: 3,
+                    shadowYOffset: 1,
+                    shadowAlpha: 0.10
+                ))
+                .frame(width: 32 + PilotIconCache.margin * 2, height: 32 + PilotIconCache.margin * 2)
+                .padding(-PilotIconCache.margin)
 
-                    if selected {
-                        Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: 14))
-                            .foregroundStyle(Color.accentColor)
-                            .background(Circle().fill(Color(NSColor.windowBackgroundColor)).padding(2))
-                    }
+                VStack(alignment: .leading, spacing: 1.5) {
+                    Text(title)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(selected ? .primary : .secondary)
+                        .lineLimit(1)
+
+                    Text(caption)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
 
-                Text(title)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(selected ? .primary : .secondary)
-                    .lineLimit(1)
+                Spacer(minLength: 4)
 
-                Text(caption)
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-                    .lineLimit(1)
+                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 13.5))
+                    .foregroundStyle(selected ? Color.accentColor : Color.secondary.opacity(0.35))
             }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 6)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5.5)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .background(
-                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
                     .fill(selected ? Color.accentColor.opacity(0.10) : Color.primary.opacity(0.03))
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 11, style: .continuous)
-                    .strokeBorder(selected ? Color.accentColor : Color.primary.opacity(0.08), lineWidth: selected ? 1.8 : 1)
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .strokeBorder(selected ? Color.accentColor : Color.primary.opacity(0.08), lineWidth: selected ? 1.5 : 1)
             )
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
@@ -577,7 +617,7 @@ struct ProxyConfigView: View {
                 } label: {
                     HStack(spacing: 3) {
                         switch antigravityUpdateStore.state {
-                        case .upToDate:
+                        case .upToDate where appModel.runtimeStatusKind == .ready:
                             Image(systemName: "checkmark.circle.fill")
                                 .foregroundStyle(.green)
                             Text(L10n.t("已是最新", "Up to Date", lang))
@@ -603,10 +643,29 @@ struct ProxyConfigView: View {
     }
 
     private var antigravityCheckButtonHelp: String {
-        if case .failed = antigravityUpdateStore.state {
+        switch antigravityUpdateStore.state {
+        case .failed:
             return L10n.t("Antigravity 更新失败", "Antigravity Update Failed", lang)
+        case .upToDate(let installedVersion, _, _):
+            if appModel.runtimeStatusKind == .ready {
+                return L10n.t(
+                    zhHans: "原版 Antigravity \(installedVersion) 已是官方最新（点击重新检查）",
+                    zhHant: "原版 Antigravity \(installedVersion) 已是官方最新（點擊重新檢查）",
+                    en: "Original Antigravity \(installedVersion) is up to date (click to re-check)",
+                    ru: "Оригинал Antigravity \(installedVersion) актуален (нажмите для повторной проверки)",
+                    lang
+                )
+            }
+            return L10n.t(
+                zhHans: "原版 Antigravity \(installedVersion) 已是官方最新，但代理副本仍需重建同步（点击重新检查）",
+                zhHant: "原版 Antigravity \(installedVersion) 已是官方最新，但代理副本仍需重建同步（點擊重新檢查）",
+                en: "Original Antigravity \(installedVersion) is up to date, but the runtime copy needs a rebuild (click to re-check)",
+                ru: "Оригинал Antigravity \(installedVersion) актуален, но копию нужно пересобрать (нажмите для проверки)",
+                lang
+            )
+        default:
+            return L10n.t("检查 Antigravity 官方更新", "Check for Antigravity updates", lang)
         }
-        return L10n.t("检查 Antigravity 官方更新", "Check for Antigravity updates", lang)
     }
 
     private var antigravityErrorPopover: some View {
