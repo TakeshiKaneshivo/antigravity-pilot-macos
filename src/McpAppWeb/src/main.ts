@@ -200,7 +200,14 @@ const state: AppState = {
   liveRequestSeq: 0,
 };
 
-const PALETTE = ['#2563eb', '#16a34a', '#d97706', '#7c3aed', '#db2777', '#0891b2'];
+const PALETTE = [
+  'var(--chart-1)',
+  'var(--chart-2)',
+  'var(--chart-3)',
+  'var(--chart-4)',
+  'var(--chart-5)',
+  'var(--chart-6)',
+];
 
 function currentLang(): ResolvedLang {
   return resolveLanguage(state.live?.proxyConfig?.resolvedLanguage);
@@ -729,11 +736,11 @@ function buildMonthLabels(weeks: Array<Array<HeatmapCellDTO | null>>): Array<{ c
 
 function heatmapFill(level: number): string {
   switch (level) {
-    case 0: return 'var(--bg-tertiary)';
-    case 1: return 'color-mix(in srgb, var(--success) 30%, var(--bg-tertiary))';
-    case 2: return 'color-mix(in srgb, var(--success) 52%, var(--bg-tertiary))';
-    case 3: return 'color-mix(in srgb, var(--success) 76%, var(--bg-tertiary))';
-    default: return 'var(--success)';
+    case 0: return 'var(--heatmap-0)';
+    case 1: return 'var(--heatmap-1)';
+    case 2: return 'var(--heatmap-2)';
+    case 3: return 'var(--heatmap-3)';
+    default: return 'var(--heatmap-4)';
   }
 }
 

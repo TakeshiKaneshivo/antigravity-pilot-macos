@@ -3,13 +3,16 @@ import SwiftUI
 
 struct UsageHeatmapView: View {
     @Environment(\.appLanguage) private var lang
+    @Environment(\.colorScheme) private var colorScheme
     @ObservedObject var monitorStore: MonitorStore
 
     @State private var selectedPeriod: UsagePeriod = .days30
     @State private var selectedDateKey: String?
     @State private var chartHoverDateKey: String?
 
-    private let chartPalette: [Color] = [.blue, .green, .orange, .purple, .pink, .teal]
+    private var chartPalette: [Color] {
+        PilotMorandiPalette.chartSeries(colorScheme: colorScheme)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -123,7 +126,7 @@ struct UsageHeatmapView: View {
                         lang
                     ),
                     icon: "sparkles",
-                    tint: .blue,
+                    tint: PilotMorandiPalette.kpiTokens(colorScheme: colorScheme),
                     compact: true
                 )
                 PilotMetricTile(
@@ -137,7 +140,7 @@ struct UsageHeatmapView: View {
                         lang
                     ),
                     icon: "bolt.fill",
-                    tint: .teal,
+                    tint: PilotMorandiPalette.kpiCache(colorScheme: colorScheme),
                     compact: true
                 )
                 PilotMetricTile(
@@ -151,7 +154,7 @@ struct UsageHeatmapView: View {
                         lang
                     ),
                     icon: "arrow.triangle.2.circlepath",
-                    tint: .indigo,
+                    tint: PilotMorandiPalette.kpiCalls(colorScheme: colorScheme),
                     compact: true
                 )
                 PilotMetricTile(
@@ -162,7 +165,7 @@ struct UsageHeatmapView: View {
                         subRatio
                     ),
                     icon: "dollarsign.circle.fill",
-                    tint: .green,
+                    tint: PilotMorandiPalette.kpiCost(colorScheme: colorScheme),
                     compact: true
                 )
             }
@@ -280,13 +283,7 @@ struct UsageHeatmapView: View {
     }
 
     private func heatmapColor(level: Int) -> Color {
-        switch level {
-        case 0: return Color.primary.opacity(0.07)
-        case 1: return Color.green.opacity(0.28)
-        case 2: return Color.green.opacity(0.50)
-        case 3: return Color.green.opacity(0.75)
-        default: return Color.green
-        }
+        PilotMorandiPalette.heatmapColor(level: level, colorScheme: colorScheme)
     }
 
     private var dailyChartCard: some View {
@@ -349,10 +346,9 @@ struct UsageHeatmapView: View {
                 y: .value("Tokens", day.totalTokens)
             )
             .foregroundStyle(
-                LinearGradient(
-                    colors: [Color.accentColor.opacity(0.65), Color.accentColor],
-                    startPoint: .bottom,
-                    endPoint: .top
+                PilotMorandiPalette.trendBarGradient(
+                    colorScheme: colorScheme,
+                    isHighlighted: chartHoverDateKey == day.dateKey
                 )
             )
             .cornerRadius(3)

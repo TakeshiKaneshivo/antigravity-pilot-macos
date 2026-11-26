@@ -847,3 +847,50 @@ struct PilotAmbientBackdrop: View {
         .ignoresSafeArea()
     }
 }
+
+enum PilotMorandiPalette {
+    static func hex(_ value: UInt32) -> Color {
+        Color(
+            red: Double((value >> 16) & 0xFF) / 255.0,
+            green: Double((value >> 8) & 0xFF) / 255.0,
+            blue: Double(value & 0xFF) / 255.0
+        )
+    }
+
+    static func heatmapColor(level: Int, colorScheme: ColorScheme) -> Color {
+        let stops: [UInt32] = colorScheme == .dark
+            ? [0x282B2E, 0x2F3C34, 0x43594B, 0x5F7C6A, 0x84A38E]
+            : [0xECEEEB, 0xD6E0D6, 0xB1C4B3, 0x8BA690, 0x62806A]
+        let idx = min(max(level, 0), stops.count - 1)
+        return hex(stops[idx])
+    }
+
+    static func trendBarGradient(colorScheme: ColorScheme, isHighlighted: Bool = false) -> LinearGradient {
+        let bottom: UInt32
+        let top: UInt32
+        if colorScheme == .dark {
+            bottom = isHighlighted ? 0x617A91 : 0x4D6275
+            top = isHighlighted ? 0x9BB5CD : 0x85A1BA
+        } else {
+            bottom = isHighlighted ? 0x91A8BD : 0xA6B8C9
+            top = isHighlighted ? 0x5B768F : 0x6F8AA3
+        }
+        return LinearGradient(
+            colors: [hex(bottom), hex(top)],
+            startPoint: .bottom,
+            endPoint: .top
+        )
+    }
+
+    static func chartSeries(colorScheme: ColorScheme) -> [Color] {
+        let values: [UInt32] = colorScheme == .dark
+            ? [0x8AA3BC, 0x9CB39E, 0xD4B096, 0xB5A2BA, 0xD1A1A6, 0x91B3B5]
+            : [0x748DA6, 0x8CA38E, 0xC9A286, 0xA38FA8, 0xC28F94, 0x7EA1A3]
+        return values.map(hex)
+    }
+
+    static func kpiTokens(colorScheme: ColorScheme) -> Color { chartSeries(colorScheme: colorScheme)[0] }
+    static func kpiCache(colorScheme: ColorScheme) -> Color { chartSeries(colorScheme: colorScheme)[5] }
+    static func kpiCalls(colorScheme: ColorScheme) -> Color { chartSeries(colorScheme: colorScheme)[3] }
+    static func kpiCost(colorScheme: ColorScheme) -> Color { chartSeries(colorScheme: colorScheme)[1] }
+}
