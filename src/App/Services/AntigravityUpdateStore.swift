@@ -5,6 +5,7 @@ import Foundation
 final class AntigravityUpdateStore: ObservableObject {
     @Published var state: AntigravityUpdateState = .idle
     @Published var lastCheckedAt: Date?
+    @Published var manualUpToDateEventCount: Int = 0
 
     let support: AppSupport
     private let lastCheckDefaultsKey = "pilot.lastAntigravityUpdateCheckTimestamp"
@@ -137,10 +138,16 @@ final class AntigravityUpdateStore: ObservableObject {
                     } else {
                         self.cachedAvailableState = nil
                         self.state = .upToDate(installedVersion: installedVersion, checkedAt: now, route: route)
+                        if userInitiated {
+                            self.manualUpToDateEventCount += 1
+                        }
                     }
                 case .upToDate:
                     self.cachedAvailableState = nil
                     self.state = .upToDate(installedVersion: installedVersion, checkedAt: now, route: route)
+                    if userInitiated {
+                        self.manualUpToDateEventCount += 1
+                    }
                 }
             } catch is CancellationError {
                 if case .checking = self.state {

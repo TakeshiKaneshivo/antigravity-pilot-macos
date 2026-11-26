@@ -51,6 +51,10 @@ struct AppSupport {
         root.appendingPathComponent("proxy.env")
     }
 
+    var pilotPIDURL: URL {
+        root.appendingPathComponent("pilot.pid")
+    }
+
     var usageCacheURL: URL {
         root.appendingPathComponent("usage_cache.json")
     }

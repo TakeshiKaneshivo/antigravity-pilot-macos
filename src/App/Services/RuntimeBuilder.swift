@@ -803,6 +803,12 @@ final class RuntimeBuilder {
         }
     }
 
+    static func currentPilotAppPath() -> String? {
+        let url = Bundle.main.bundleURL.standardizedFileURL
+        guard url.pathExtension == "app" else { return nil }
+        return url.path
+    }
+
     static func writeExternalProxyEnv(config: ProxyConfig, support: AppSupport) throws {
         try support.ensureRoot()
         try writeProxyEnv(config: config, to: support.externalProxyEnvURL, sourceVersion: nil, sourceBuild: nil)
@@ -814,7 +820,8 @@ final class RuntimeBuilder {
         sourceVersion: String?,
         sourceBuild: String? = nil,
         iconStyle: RuntimeIconStyle? = nil,
-        iconSourceSHA256: String? = nil
+        iconSourceSHA256: String? = nil,
+        pilotAppPath: String? = RuntimeBuilder.currentPilotAppPath()
     ) throws {
         let noProxy = config.effectiveNoProxy
         var lines = [
@@ -832,6 +839,9 @@ final class RuntimeBuilder {
             "no_proxy=\(noProxy)",
             "NODE_USE_ENV_PROXY=1"
         ]
+        if let pilotAppPath, !pilotAppPath.isEmpty {
+            lines.append("AG_PILOT_APP_PATH=\(pilotAppPath)")
+        }
         if let sourceVersion, !sourceVersion.isEmpty {
             lines.append("AG_SOURCE_VERSION=\(sourceVersion)")
         }
@@ -1830,6 +1840,7 @@ final class AppModel: ObservableObject {
                 ? L10n.t("已热更新配置并启动", "Hot-updated config & launched", lang)
                 : L10n.t("已重建副本并启动", "Rebuilt runtime & launched", lang)
             bannerSuccessMessage = status
+            SystemNotificationService.shared.requestAuthorizationIfNeeded()
             if case .updateAvailable = mcpPluginStatus {
                 let ver = appVersionText
                 try? await Task.detached(priority: .utility) {

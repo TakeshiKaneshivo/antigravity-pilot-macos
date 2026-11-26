@@ -10,6 +10,8 @@ enum AppEntry {
     static func main() {
         if CommandLine.arguments.contains("--smoke-test") {
             SmokeTestRunner.runAndExit()
+        } else if CommandLine.arguments.contains("--notify-runtime-update") {
+            SystemNotificationService.runHeadlessRuntimeUpdateNotificationAndExit(arguments: CommandLine.arguments)
         } else {
             AntigravityProxyApp.main()
         }
@@ -44,6 +46,7 @@ final class BuilderAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
     let monitorStore = MonitorStore()
     let updateStore = UpdateStore()
     let antigravityUpdateStore = AntigravityUpdateStore()
+    private let notificationService = SystemNotificationService.shared
     private var statusBarController: StatusBarController?
     private weak var mainWindow: NSWindow?
     private var mainWindowMouseDownMonitor: Any?
@@ -53,6 +56,23 @@ final class BuilderAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
         appModel.load()
         monitorStore.start()
         let appSupport = appModel.support
+        notificationService.configure { [weak self] in
+            self?.showMainWindow()
+        }
+        SystemNotificationService.writePIDFile(at: appSupport.pilotPIDURL)
+        notificationService.startDarwinListener { [weak self] in
+            guard let self else { return }
+            self.appModel.refreshRuntimeStatus()
+            self.notificationService.postRuntimeUpdateNeeded(language: self.appModel.config.appLanguage)
+        }
+        if FileManager.default.fileExists(atPath: appSupport.runtimeApp.path) {
+            notificationService.requestAuthorizationIfNeeded()
+        }
+        if FileManager.default.fileExists(atPath: appSupport.externalProxyEnvURL.path),
+           let currentPilotPath = RuntimeBuilder.currentPilotAppPath(),
+           RuntimeBuilder.readEnvValue(key: "AG_PILOT_APP_PATH", from: appSupport.externalProxyEnvURL) != currentPilotPath {
+            try? RuntimeBuilder.writeExternalProxyEnv(config: appModel.config, support: appSupport)
+        }
         let bundleURL = Bundle.main.bundleURL
         Task.detached(priority: .utility) {
             if AppUpdateService.refreshBundleIconCacheIfChanged(bundleURL: bundleURL, support: appSupport) {
@@ -125,6 +145,8 @@ final class BuilderAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        notificationService.stopDarwinListener()
+        SystemNotificationService.removePIDFileIfOwned(at: appModel.support.pilotPIDURL)
         if let monitor = mainWindowMouseDownMonitor {
             NSEvent.removeMonitor(monitor)
             mainWindowMouseDownMonitor = nil
@@ -236,6 +258,12 @@ final class BuilderAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
 
 @MainActor
 final class StatusBarController: NSObject, NSPopoverDelegate, NSMenuDelegate {
+    nonisolated private static let spinnerFrameCount = 16
+    private static let spinnerFrameInterval: TimeInterval = 1.0 / 12.0
+    nonisolated private static let spinnerImageSize = NSSize(width: 32, height: 18)
+    private static var cachedBaseIcon: NSImage?
+    private static var cachedSpinnerFrames: [NSImage]?
+
     private let appModel: AppModel
     private let monitorStore: MonitorStore
     private let updateStore: UpdateStore
@@ -246,6 +274,9 @@ final class StatusBarController: NSObject, NSPopoverDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem?
     private let popover = NSPopover()
     private var contextMenu: NSMenu?
+    nonisolated(unsafe) private var spinnerTimer: Timer?
+    private var spinnerFrameIndex: Int = 0
+    private var isShowingSpinner: Bool = false
     nonisolated(unsafe) private var pendingSingleClickWorkItem: DispatchWorkItem?
     nonisolated(unsafe) private var globalPopoverMonitor: Any?
     nonisolated(unsafe) private var localPopoverMonitor: Any?
@@ -261,6 +292,7 @@ final class StatusBarController: NSObject, NSPopoverDelegate, NSMenuDelegate {
     }
 
     deinit {
+        spinnerTimer?.invalidate()
         pendingSingleClickWorkItem?.cancel()
         if let global = globalPopoverMonitor {
             NSEvent.removeMonitor(global)
@@ -308,6 +340,8 @@ final class StatusBarController: NSObject, NSPopoverDelegate, NSMenuDelegate {
 
     func updateVisibilityAndTitle() {
         if !appModel.config.enableMenuBarMonitor {
+            stopSpinnerTimer()
+            isShowingSpinner = false
             cancelPendingSingleClick()
             closePopover()
             if let item = statusItem {
@@ -330,22 +364,164 @@ final class StatusBarController: NSObject, NSPopoverDelegate, NSMenuDelegate {
         }
 
         guard let button = statusItem?.button else { return }
-        if appModel.config.showMenuBarMetrics, let compact = monitorStore.compactMenuBarText {
-            button.title = " \(compact)"
+        let config = appModel.config
+        let isLive = monitorStore.liveHub != nil
+        let runningCount = (isLive && config.showMenuBarRunningStatus) ? monitorStore.activeRunningSessionCount : 0
+        let metricsText = isLive
+            ? monitorStore.compactMetricsText(
+                includeContext: config.showMenuBarContextUsage,
+                includeQuota: config.showMenuBarQuotaPercent
+            )
+            : nil
+        let shouldShowSpinner = runningCount > 0
+        let targetTitle = isLive
+            ? MonitorStore.formatMenuBarTitle(runningCount: runningCount, metricsText: metricsText)
+            : ""
+
+        if button.title != targetTitle {
+            button.title = targetTitle
+        }
+        if !targetTitle.isEmpty {
             button.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium)
+        }
+        let targetTooltip = monitorStore.menuBarTooltip(lang: config.appLanguage)
+        if button.toolTip != targetTooltip {
+            button.toolTip = targetTooltip
+        }
+
+        if shouldShowSpinner {
+            if !isShowingSpinner {
+                isShowingSpinner = true
+                spinnerFrameIndex = 0
+                button.image = Self.spinnerStatusBarImage(frameIndex: 0)
+            }
+            startSpinnerTimerIfNeeded()
         } else {
-            button.title = ""
+            stopSpinnerTimer()
+            if isShowingSpinner || button.image == nil {
+                isShowingSpinner = false
+                button.image = Self.makeStatusBarImage()
+            }
         }
     }
 
     private static func makeStatusBarImage() -> NSImage? {
-        if let image = Bundle.main.image(forResource: NSImage.Name("menubar-icon")) {
-            image.size = NSSize(width: 18, height: 18)
-            image.isTemplate = true
-            image.accessibilityDescription = "Antigravity Pilot"
-            return image
+        if let cached = cachedBaseIcon {
+            return cached
         }
-        return NSImage(systemSymbolName: "network.badge.shield.half.filled", accessibilityDescription: "Antigravity Pilot")
+        let image: NSImage?
+        if let bundleImage = Bundle.main.image(forResource: NSImage.Name("menubar-icon")) {
+            bundleImage.size = NSSize(width: 18, height: 18)
+            bundleImage.isTemplate = true
+            bundleImage.accessibilityDescription = "Antigravity Pilot"
+            image = bundleImage
+        } else {
+            image = NSImage(systemSymbolName: "network.badge.shield.half.filled", accessibilityDescription: "Antigravity Pilot")
+        }
+        cachedBaseIcon = image
+        return image
+    }
+
+    private static func spinnerStatusBarImage(frameIndex: Int) -> NSImage {
+        if let frames = cachedSpinnerFrames, !frames.isEmpty {
+            let normalized = ((frameIndex % frames.count) + frames.count) % frames.count
+            return frames[normalized]
+        }
+        let base = makeStatusBarImage()
+        let frames = (0..<spinnerFrameCount).map { idx in
+            renderSpinnerStatusBarImage(baseImage: base, frameIndex: idx)
+        }
+        cachedSpinnerFrames = frames
+        let normalized = ((frameIndex % frames.count) + frames.count) % frames.count
+        return frames[normalized]
+    }
+
+    nonisolated static func renderSpinnerStatusBarImage(baseImage: NSImage?, frameIndex: Int) -> NSImage {
+        let size = spinnerImageSize
+        let out = NSImage(size: size)
+        let normalized = ((frameIndex % spinnerFrameCount) + spinnerFrameCount) % spinnerFrameCount
+        let startAngle = CGFloat.pi / 2 - CGFloat(normalized) * (2 * CGFloat.pi / CGFloat(spinnerFrameCount))
+        let sweep = CGFloat(240.0 * .pi / 180.0)
+        let center = CGPoint(x: 27.0, y: 9.0)
+        let radius: CGFloat = 3.85
+
+        for scale in [2, 3] {
+            let pxW = Int(size.width) * scale
+            let pxH = Int(size.height) * scale
+            guard let rep = NSBitmapImageRep(
+                bitmapDataPlanes: nil,
+                pixelsWide: pxW,
+                pixelsHigh: pxH,
+                bitsPerSample: 8,
+                samplesPerPixel: 4,
+                hasAlpha: true,
+                isPlanar: false,
+                colorSpaceName: .deviceRGB,
+                bytesPerRow: 0,
+                bitsPerPixel: 0
+            ), let ctx = NSGraphicsContext(bitmapImageRep: rep) else {
+                continue
+            }
+            rep.size = size
+
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = ctx
+            let cg = ctx.cgContext
+            cg.scaleBy(x: CGFloat(scale), y: CGFloat(scale))
+
+            if let baseImage {
+                baseImage.draw(
+                    in: NSRect(x: 0, y: 0, width: 18, height: 18),
+                    from: .zero,
+                    operation: .sourceOver,
+                    fraction: 1.0
+                )
+            }
+
+            cg.setLineWidth(1.15)
+            cg.setStrokeColor(NSColor.black.withAlphaComponent(0.20).cgColor)
+            cg.addArc(center: center, radius: radius, startAngle: 0, endAngle: 2 * CGFloat.pi, clockwise: false)
+            cg.strokePath()
+
+            cg.setLineWidth(1.3)
+            cg.setLineCap(.round)
+            cg.setStrokeColor(NSColor.black.cgColor)
+            cg.addArc(
+                center: center,
+                radius: radius,
+                startAngle: startAngle,
+                endAngle: startAngle - sweep,
+                clockwise: true
+            )
+            cg.strokePath()
+
+            NSGraphicsContext.restoreGraphicsState()
+            out.addRepresentation(rep)
+        }
+
+        out.isTemplate = true
+        out.accessibilityDescription = "Antigravity Pilot"
+        return out
+    }
+
+    private func startSpinnerTimerIfNeeded() {
+        guard spinnerTimer == nil else { return }
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
+        let timer = Timer(timeInterval: Self.spinnerFrameInterval, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self, self.isShowingSpinner, let button = self.statusItem?.button else { return }
+                self.spinnerFrameIndex = (self.spinnerFrameIndex + 1) % Self.spinnerFrameCount
+                button.image = Self.spinnerStatusBarImage(frameIndex: self.spinnerFrameIndex)
+            }
+        }
+        timer.tolerance = 0.02
+        RunLoop.main.add(timer, forMode: .common)
+        spinnerTimer = timer
+    }
+
+    private func stopSpinnerTimer() {
+        spinnerTimer?.invalidate()
+        spinnerTimer = nil
     }
 
     private func cancelPendingSingleClick() {
@@ -1848,6 +2024,165 @@ enum SmokeTestRunner {
                 && bestActive?.hub.pid == 102
                 && bestPinned?.hub.pid == 103,
             "MonitorStore adaptive polling (5s/10s/30s) & selectBestHubCandidate ranking behave as expected"
+        )
+
+        // 31. Menu bar metrics formatting & monochrome template arc spinner rendering
+        check(
+            MonitorStore.formatMenuBarTitle(runningCount: 0, metricsText: "18K · 47%") == " 18K · 47%"
+                && MonitorStore.formatMenuBarTitle(runningCount: 1, metricsText: "18K · 47%") == " 18K · 47%"
+                && MonitorStore.formatMenuBarTitle(runningCount: 2, metricsText: "117K · 46%") == "2 · 117K · 46%"
+                && MonitorStore.formatMenuBarTitle(runningCount: 1, metricsText: nil) == ""
+                && MonitorStore.formatMenuBarTitle(runningCount: 2, metricsText: nil) == "2"
+                && MonitorStore.formatMenuBarTitle(runningCount: 0, metricsText: nil) == "",
+            "MonitorStore.formatMenuBarTitle formats runningCount & metricsText across all states"
+        )
+
+        let spinFrame0 = StatusBarController.renderSpinnerStatusBarImage(baseImage: nil, frameIndex: 0)
+        let spinFrame4 = StatusBarController.renderSpinnerStatusBarImage(baseImage: nil, frameIndex: 4)
+        let reps0 = spinFrame0.representations.compactMap { $0 as? NSBitmapImageRep }
+        let reps4 = spinFrame4.representations.compactMap { $0 as? NSBitmapImageRep }
+        let has2xAnd3x0 = reps0.contains { $0.pixelsWide == 64 && $0.pixelsHigh == 36 }
+            && reps0.contains { $0.pixelsWide == 96 && $0.pixelsHigh == 54 }
+        let has2xAnd3x4 = reps4.contains { $0.pixelsWide == 64 && $0.pixelsHigh == 36 }
+            && reps4.contains { $0.pixelsWide == 96 && $0.pixelsHigh == 54 }
+        let tiff0 = reps0.first(where: { $0.pixelsWide == 64 })?.tiffRepresentation
+        let tiff4 = reps4.first(where: { $0.pixelsWide == 64 })?.tiffRepresentation
+        check(
+            spinFrame0.isTemplate
+                && spinFrame4.isTemplate
+                && spinFrame0.size == NSSize(width: 32, height: 18)
+                && spinFrame4.size == NSSize(width: 32, height: 18)
+                && has2xAnd3x0
+                && has2xAnd3x4
+                && tiff0 != nil
+                && tiff4 != nil
+                && tiff0 != tiff4,
+            "StatusBarController renders 2x/3x monochrome template arc spinner with rotating frames"
+        )
+
+        // 32. Granular menu bar display flags, legacy migration & filtered metrics formatting
+        let defaultMenuCfg = ProxyConfig.defaultConfig
+        check(
+            defaultMenuCfg.showMenuBarRunningStatus
+                && defaultMenuCfg.showMenuBarContextUsage
+                && defaultMenuCfg.showMenuBarQuotaPercent
+                && defaultMenuCfg.hasAnyMenuBarContent,
+            "ProxyConfig defaults all 3 menu bar display options to enabled"
+        )
+
+        let legacyOffJSON = """
+        {"host":"127.0.0.1","hookPort":7890,"envScheme":"http","envPort":7890,"showMenuBarMetrics":false}
+        """
+        let legacyDecoded = try? JSONDecoder().decode(ProxyConfig.self, from: Data(legacyOffJSON.utf8))
+        check(
+            legacyDecoded != nil
+                && legacyDecoded?.showMenuBarRunningStatus == false
+                && legacyDecoded?.showMenuBarContextUsage == false
+                && legacyDecoded?.showMenuBarQuotaPercent == false
+                && legacyDecoded?.hasAnyMenuBarContent == false,
+            "ProxyConfig migrates legacy showMenuBarMetrics=false to all 3 granular flags"
+        )
+
+        var customMenuCfg = ProxyConfig.defaultConfig
+        customMenuCfg.showMenuBarRunningStatus = false
+        customMenuCfg.showMenuBarContextUsage = true
+        customMenuCfg.showMenuBarQuotaPercent = false
+        customMenuCfg.syncMenuBarMetricsMasterFlag()
+        let encodedCustom = try? JSONEncoder().encode(customMenuCfg)
+        let decodedCustom = encodedCustom.flatMap { try? JSONDecoder().decode(ProxyConfig.self, from: $0) }
+        check(
+            decodedCustom?.showMenuBarRunningStatus == false
+                && decodedCustom?.showMenuBarContextUsage == true
+                && decodedCustom?.showMenuBarQuotaPercent == false
+                && decodedCustom?.showMenuBarMetrics == true,
+            "ProxyConfig round-trips granular menu bar flags and syncs master flag"
+        )
+
+        check(
+            MonitorStore.formatMetricsText(contextTokens: 18_400, quotaRemainingPercent: 47, includeContext: true, includeQuota: true) == "18K · 47%"
+                && MonitorStore.formatMetricsText(contextTokens: 18_400, quotaRemainingPercent: 47, includeContext: true, includeQuota: false) == "18K"
+                && MonitorStore.formatMetricsText(contextTokens: 18_400, quotaRemainingPercent: 47, includeContext: false, includeQuota: true) == "47%"
+                && MonitorStore.formatMetricsText(contextTokens: 18_400, quotaRemainingPercent: 47, includeContext: false, includeQuota: false) == nil,
+            "MonitorStore.formatMetricsText filters context and quota cleanly without stray separators"
+        )
+
+        // 33. Weekly 7d quota prefix & localized menu bar hover tooltip
+        check(
+            MonitorStore.formatMetricsText(contextTokens: 18_400, quotaRemainingPercent: 47, quotaWindowKind: .fiveHour, includeContext: true, includeQuota: true) == "18K · 47%"
+                && MonitorStore.formatMetricsText(contextTokens: 18_400, quotaRemainingPercent: 47, quotaWindowKind: .weekly, includeContext: true, includeQuota: true) == "18K · 7d 47%"
+                && MonitorStore.formatMetricsText(contextTokens: 18_400, quotaRemainingPercent: 47, quotaWindowKind: .weekly, includeContext: false, includeQuota: true) == "7d 47%",
+            "MonitorStore.formatMetricsText prefixes 7d only when tightest window is weekly"
+        )
+
+        let tipWeeklyZh = MonitorStore.formatMenuBarTooltip(
+            isLive: true,
+            runningCount: 2,
+            contextUsedText: "117.0K",
+            contextLimitText: "1.00M",
+            modelDisplayName: "Gemini 4",
+            quotaTitle: "Gemini",
+            quotaWindowKind: .weekly,
+            quotaRemainingPercent: 46,
+            quotaResetText: "3天 2小时后重置",
+            lang: .zhHans
+        )
+        let tip5hEn = MonitorStore.formatMenuBarTooltip(
+            isLive: true,
+            runningCount: 1,
+            contextUsedText: "18.4K",
+            contextLimitText: "1.00M",
+            modelDisplayName: "Claude",
+            quotaTitle: "Claude",
+            quotaWindowKind: .fiveHour,
+            quotaRemainingPercent: 47,
+            quotaResetText: "Resets in 2h 10m",
+            lang: .en
+        )
+        let tipWaiting = MonitorStore.formatMenuBarTooltip(
+            isLive: false,
+            runningCount: 0,
+            contextUsedText: nil,
+            contextLimitText: nil,
+            modelDisplayName: nil,
+            quotaTitle: nil,
+            quotaWindowKind: nil,
+            quotaRemainingPercent: nil,
+            quotaResetText: nil,
+            lang: .zhHans
+        )
+        check(
+            tipWeeklyZh.contains("每周 46%")
+                && tipWeeklyZh.contains("运行中：2")
+                && tip5hEn.contains("5h 47%")
+                && tip5hEn.contains("Running: 1 active session")
+                && tipWaiting.contains("等待 Antigravity 启动"),
+            "MonitorStore.formatMenuBarTooltip formats localized 5h/weekly quota, running count, and waiting states"
+        )
+
+        // 34. Native runtime-update notification copy (3-line, no version numbers) & AG_PILOT_APP_PATH in proxy.env
+        let concreteLangs: [AppLanguage] = [.zhHans, .zhHant, .en, .ru]
+        let notifCopiesValid = concreteLangs.allSatisfy { lang in
+            let copy = SystemNotificationService.runtimeUpdateCopy(for: lang)
+            return copy.title == "Antigravity Pilot"
+                && !copy.subtitle.isEmpty
+                && !copy.body.isEmpty
+                && !copy.subtitle.contains("→")
+                && !copy.body.contains("→")
+                && copy.subtitle.count <= 32
+        }
+        let tempEnvURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ag-pilot-env-test-\(UUID().uuidString).env")
+        defer { try? FileManager.default.removeItem(at: tempEnvURL) }
+        try? RuntimeBuilder.writeProxyEnv(
+            config: ProxyConfig.defaultConfig,
+            to: tempEnvURL,
+            sourceVersion: "2.35.1",
+            pilotAppPath: "/Applications/Antigravity Pilot.app"
+        )
+        let readPilotPath = RuntimeBuilder.readEnvValue(key: "AG_PILOT_APP_PATH", from: tempEnvURL)
+        check(
+            notifCopiesValid && readPilotPath == "/Applications/Antigravity Pilot.app",
+            "SystemNotificationService provides concise 3-line 4-language copy without versions & writeProxyEnv persists AG_PILOT_APP_PATH"
         )
 
         exit(tracker.hasFailed ? 1 : 0)

@@ -272,15 +272,45 @@ struct MainWindowView: View {
                         }
 
                         HStack(spacing: 5) {
-                            Image(systemName: monitorStore.liveHub != nil ? "bolt.horizontal.fill" : "moon.zzz")
-                                .font(.caption2)
-                                .foregroundStyle(monitorStore.liveHub != nil ? .teal : .secondary)
-                            Text(monitorStore.compactMenuBarText ?? L10n.t("等待 Antigravity 运行", "Waiting for Antigravity", lang))
-                                .font(.caption2)
-                                .fontDesign(.rounded)
-                                .monospacedDigit()
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
+                            if monitorStore.liveHub == nil {
+                                Image(systemName: "moon.zzz")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                Text(L10n.t("等待 Antigravity 运行", "Waiting for Antigravity", lang))
+                                    .font(.caption2)
+                                    .fontDesign(.rounded)
+                                    .monospacedDigit()
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            } else if monitorStore.activeRunningSessionCount > 0 {
+                                PilotMiniArcSpinner()
+                                let count = monitorStore.activeRunningSessionCount
+                                let sidebarText: String = {
+                                    if count > 1 {
+                                        if let metrics = monitorStore.compactMetricsText {
+                                            return "\(count) · \(metrics)"
+                                        }
+                                        return "\(count)"
+                                    }
+                                    return monitorStore.compactMetricsText ?? L10n.t("运行中", "Running", lang)
+                                }()
+                                Text(sidebarText)
+                                    .font(.caption2)
+                                    .fontDesign(.rounded)
+                                    .monospacedDigit()
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            } else {
+                                Image(systemName: "bolt.horizontal.fill")
+                                    .font(.caption2)
+                                    .foregroundStyle(.teal)
+                                Text(monitorStore.compactMetricsText ?? L10n.t("已连接", "Connected", lang))
+                                    .font(.caption2)
+                                    .fontDesign(.rounded)
+                                    .monospacedDigit()
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
                         }
                     }
                 }
@@ -579,6 +609,47 @@ struct MainWindowView: View {
         case .healthy: return .green
         case .degraded: return .orange
         case .failed: return .red
+        }
+    }
+}
+
+private struct PilotMiniArcSpinner: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isSpinning = false
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .stroke(Color.primary.opacity(0.20), lineWidth: 1.2)
+            Circle()
+                .trim(from: 0, to: 0.67)
+                .stroke(
+                    Color.primary.opacity(0.82),
+                    style: StrokeStyle(lineWidth: 1.25, lineCap: .round)
+                )
+                .rotationEffect(.degrees(isSpinning && !reduceMotion ? 360 : 0))
+        }
+        .frame(width: 9, height: 9)
+        .onAppear {
+            startIfNeeded()
+        }
+        .onChange(of: reduceMotion) { newValue in
+            if newValue {
+                isSpinning = false
+            } else {
+                startIfNeeded()
+            }
+        }
+    }
+
+    private func startIfNeeded() {
+        guard !reduceMotion else {
+            isSpinning = false
+            return
+        }
+        isSpinning = false
+        withAnimation(.linear(duration: 1.33).repeatForever(autoreverses: false)) {
+            isSpinning = true
         }
     }
 }

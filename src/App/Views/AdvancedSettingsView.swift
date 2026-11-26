@@ -46,9 +46,6 @@ struct AdvancedSettingsView: View {
         .onChange(of: appModel.config.enableMenuBarMonitor) { _ in
             appModel.savePreferencesOnly()
         }
-        .onChange(of: appModel.config.showMenuBarMetrics) { _ in
-            appModel.savePreferencesOnly()
-        }
     }
 
     private var languageCard: some View {
@@ -190,7 +187,13 @@ struct AdvancedSettingsView: View {
                             "Show live context & quota metrics in menu bar (e.g. 188K · 89%)",
                             lang
                         ),
-                        isOn: $appModel.config.showMenuBarMetrics
+                        isOn: Binding(
+                            get: { appModel.config.hasAnyMenuBarContent },
+                            set: { enabled in
+                                appModel.config.setMenuBarMetricsMaster(enabled)
+                                appModel.savePreferencesOnly()
+                            }
+                        )
                     )
                     .font(.callout)
                     .padding(.leading, 18)

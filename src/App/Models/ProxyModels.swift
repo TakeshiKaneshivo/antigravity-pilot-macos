@@ -40,6 +40,9 @@ struct ProxyConfig: Codable, Equatable {
     var noProxy: String
     var enableMenuBarMonitor: Bool
     var showMenuBarMetrics: Bool
+    var showMenuBarRunningStatus: Bool
+    var showMenuBarContextUsage: Bool
+    var showMenuBarQuotaPercent: Bool
     var appLanguage: AppLanguage
     var chartPalette: ChartPalettePreset
     var autoCheckUpdates: Bool
@@ -51,6 +54,27 @@ struct ProxyConfig: Codable, Equatable {
         set { runtimeIconStyle = newValue ? .original : .originalWithBadge }
     }
 
+    var hasAnyMenuBarContent: Bool {
+        showMenuBarRunningStatus || showMenuBarContextUsage || showMenuBarQuotaPercent
+    }
+
+    mutating func syncMenuBarMetricsMasterFlag() {
+        showMenuBarMetrics = hasAnyMenuBarContent
+    }
+
+    mutating func setMenuBarMetricsMaster(_ enabled: Bool) {
+        showMenuBarMetrics = enabled
+        if !enabled {
+            showMenuBarRunningStatus = false
+            showMenuBarContextUsage = false
+            showMenuBarQuotaPercent = false
+        } else if !hasAnyMenuBarContent {
+            showMenuBarRunningStatus = true
+            showMenuBarContextUsage = true
+            showMenuBarQuotaPercent = true
+        }
+    }
+
     static let defaultConfig = ProxyConfig(
         host: "127.0.0.1",
         hookPort: 7890,
@@ -60,6 +84,9 @@ struct ProxyConfig: Codable, Equatable {
         noProxy: defaultNoProxy,
         enableMenuBarMonitor: true,
         showMenuBarMetrics: true,
+        showMenuBarRunningStatus: true,
+        showMenuBarContextUsage: true,
+        showMenuBarQuotaPercent: true,
         appLanguage: .system,
         chartPalette: .morandiClassic,
         autoCheckUpdates: true,
@@ -76,6 +103,9 @@ struct ProxyConfig: Codable, Equatable {
         noProxy: String = ProxyConfig.defaultNoProxy,
         enableMenuBarMonitor: Bool = true,
         showMenuBarMetrics: Bool = true,
+        showMenuBarRunningStatus: Bool = true,
+        showMenuBarContextUsage: Bool = true,
+        showMenuBarQuotaPercent: Bool = true,
         appLanguage: AppLanguage = .system,
         chartPalette: ChartPalettePreset = .morandiClassic,
         autoCheckUpdates: Bool = true,
@@ -90,6 +120,9 @@ struct ProxyConfig: Codable, Equatable {
         self.noProxy = noProxy
         self.enableMenuBarMonitor = enableMenuBarMonitor
         self.showMenuBarMetrics = showMenuBarMetrics
+        self.showMenuBarRunningStatus = showMenuBarRunningStatus
+        self.showMenuBarContextUsage = showMenuBarContextUsage
+        self.showMenuBarQuotaPercent = showMenuBarQuotaPercent
         self.appLanguage = appLanguage
         self.chartPalette = chartPalette
         self.autoCheckUpdates = autoCheckUpdates
@@ -107,6 +140,9 @@ struct ProxyConfig: Codable, Equatable {
         case noProxy
         case enableMenuBarMonitor
         case showMenuBarMetrics
+        case showMenuBarRunningStatus
+        case showMenuBarContextUsage
+        case showMenuBarQuotaPercent
         case appLanguage
         case chartPalette
         case autoCheckUpdates
@@ -131,7 +167,11 @@ struct ProxyConfig: Codable, Equatable {
             ? decodedNoProxy!
             : ProxyConfig.defaultNoProxy
         enableMenuBarMonitor = try container.decodeIfPresent(Bool.self, forKey: .enableMenuBarMonitor) ?? true
-        showMenuBarMetrics = try container.decodeIfPresent(Bool.self, forKey: .showMenuBarMetrics) ?? true
+        let legacyMetrics = try container.decodeIfPresent(Bool.self, forKey: .showMenuBarMetrics) ?? true
+        showMenuBarRunningStatus = try container.decodeIfPresent(Bool.self, forKey: .showMenuBarRunningStatus) ?? legacyMetrics
+        showMenuBarContextUsage = try container.decodeIfPresent(Bool.self, forKey: .showMenuBarContextUsage) ?? legacyMetrics
+        showMenuBarQuotaPercent = try container.decodeIfPresent(Bool.self, forKey: .showMenuBarQuotaPercent) ?? legacyMetrics
+        showMenuBarMetrics = showMenuBarRunningStatus || showMenuBarContextUsage || showMenuBarQuotaPercent
         appLanguage = try container.decodeIfPresent(AppLanguage.self, forKey: .appLanguage) ?? .system
         chartPalette = (try? container.decodeIfPresent(ChartPalettePreset.self, forKey: .chartPalette)) ?? .morandiClassic
         autoCheckUpdates = try container.decodeIfPresent(Bool.self, forKey: .autoCheckUpdates) ?? true
@@ -149,7 +189,10 @@ struct ProxyConfig: Codable, Equatable {
         try container.encode(useOriginalIcon, forKey: .useOriginalIcon)
         try container.encode(noProxy, forKey: .noProxy)
         try container.encode(enableMenuBarMonitor, forKey: .enableMenuBarMonitor)
-        try container.encode(showMenuBarMetrics, forKey: .showMenuBarMetrics)
+        try container.encode(hasAnyMenuBarContent, forKey: .showMenuBarMetrics)
+        try container.encode(showMenuBarRunningStatus, forKey: .showMenuBarRunningStatus)
+        try container.encode(showMenuBarContextUsage, forKey: .showMenuBarContextUsage)
+        try container.encode(showMenuBarQuotaPercent, forKey: .showMenuBarQuotaPercent)
         try container.encode(appLanguage, forKey: .appLanguage)
         try container.encode(chartPalette, forKey: .chartPalette)
         try container.encode(autoCheckUpdates, forKey: .autoCheckUpdates)

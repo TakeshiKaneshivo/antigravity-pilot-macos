@@ -2,7 +2,9 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <libproc.h>
 #include <limits.h>
+#include <notify.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -206,6 +208,90 @@ static int should_show_startup_tip(int argc, char **argv) {
   return 1;
 }
 
+static int is_pilot_process_alive(pid_t pid) {
+  if (pid <= 1 || kill(pid, 0) != 0) {
+    return 0;
+  }
+  char path_buf[PROC_PIDPATHINFO_MAXSIZE];
+  int len = proc_pidpath(pid, path_buf, (uint32_t)sizeof(path_buf));
+  if (len <= 0) {
+    return 0;
+  }
+  path_buf[sizeof(path_buf) - 1] = '\0';
+  const char *suffix = "/AntigravityProxyBuilder";
+  size_t path_len = strlen(path_buf);
+  size_t suffix_len = strlen(suffix);
+  if (path_len < suffix_len) {
+    return 0;
+  }
+  return strcmp(path_buf + path_len - suffix_len, suffix) == 0;
+}
+
+static int notify_running_pilot_app(void) {
+  const char *home_dir = getenv("HOME");
+  if (!home_dir || !home_dir[0]) {
+    return 0;
+  }
+  char pid_path[PATH_MAX];
+  int written = snprintf(pid_path, sizeof(pid_path),
+                         "%s/Library/Application Support/Antigravity Pilot/pilot.pid", home_dir);
+  if (written <= 0 || (size_t)written >= sizeof(pid_path)) {
+    return 0;
+  }
+  FILE *fp = fopen(pid_path, "r");
+  if (!fp) {
+    return 0;
+  }
+  char buf[64];
+  size_t n = fread(buf, 1, sizeof(buf) - 1, fp);
+  fclose(fp);
+  if (n == 0) {
+    return 0;
+  }
+  buf[n] = '\0';
+  char *endptr = NULL;
+  long parsed = strtol(buf, &endptr, 10);
+  if (endptr == buf || parsed <= 1) {
+    return 0;
+  }
+  if (!is_pilot_process_alive((pid_t)parsed)) {
+    return 0;
+  }
+  return notify_post("com.takeshikaneshivo.antigravity-pilot.runtime-update-needed") == NOTIFY_STATUS_OK ? 1 : 0;
+}
+
+static int check_pilot_bundle_binary(const char *app_path, char *out_buf, size_t out_size) {
+  if (!app_path || !app_path[0]) {
+    return 0;
+  }
+  int written = snprintf(out_buf, out_size, "%s/Contents/MacOS/AntigravityProxyBuilder", app_path);
+  if (written <= 0 || (size_t)written >= out_size) {
+    return 0;
+  }
+  return access(out_buf, X_OK) == 0 ? 1 : 0;
+}
+
+static int resolve_pilot_builder_binary(char *out_buf, size_t out_size) {
+  const char *env_app_path = getenv("AG_PILOT_APP_PATH");
+  if (check_pilot_bundle_binary(env_app_path, out_buf, out_size)) {
+    return 1;
+  }
+  if (check_pilot_bundle_binary("/Applications/Antigravity Pilot.app", out_buf, out_size)) {
+    return 1;
+  }
+  const char *home_dir = getenv("HOME");
+  if (home_dir && home_dir[0]) {
+    char user_app[PATH_MAX];
+    int written = snprintf(user_app, sizeof(user_app), "%s/Applications/Antigravity Pilot.app", home_dir);
+    if (written > 0 && (size_t)written < sizeof(user_app)) {
+      if (check_pilot_bundle_binary(user_app, out_buf, out_size)) {
+        return 1;
+      }
+    }
+  }
+  return 0;
+}
+
 static void spawn_startup_tip_async(void) {
   pid_t p1 = fork();
   if (p1 < 0) {
@@ -233,7 +319,6 @@ static void spawn_startup_tip_async(void) {
       }
     }
 
-    const char *ag_proxy = getenv("AG_PROXY");
     const char *built_ver = getenv("AG_SOURCE_VERSION");
     const char *app_lang = getenv("AG_APP_LANG");
     if (!app_lang || !app_lang[0]) {
@@ -249,9 +334,6 @@ static void spawn_startup_tip_async(void) {
         app_lang = "en";
       }
     }
-    if (!ag_proxy || !ag_proxy[0]) {
-      ag_proxy = "socks5://127.0.0.1:7890";
-    }
 
     char current_ver[128];
     int has_current_ver = (read_source_app_version(current_ver, sizeof(current_ver)) == 0);
@@ -261,55 +343,34 @@ static void spawn_startup_tip_async(void) {
       _exit(0);
     }
 
-    char subtitle[512];
-    char notify_msg[1024];
-    char dialog_msg[2048];
-    const char *ok_btn = "OK";
+    if (notify_running_pilot_app()) {
+      _exit(0);
+    }
+
+    char pilot_bin[PATH_MAX];
+    if (resolve_pilot_builder_binary(pilot_bin, sizeof(pilot_bin))) {
+      execl(pilot_bin, "AntigravityProxyBuilder", "--notify-runtime-update", "--lang", app_lang, (char *)NULL);
+    }
+
+    const char *subtitle;
+    const char *notify_msg;
 
     int is_zh_hans = (strcmp(app_lang, "zh-Hans") == 0);
     int is_zh_hant = (strcmp(app_lang, "zh-Hant") == 0);
     int is_ru = (strcmp(app_lang, "ru") == 0);
 
     if (is_zh_hant) {
-      ok_btn = "知道了";
-      snprintf(subtitle, sizeof(subtitle), "偵測到原版 Antigravity 已更新（%s → %s）", built_ver, current_ver);
-      snprintf(notify_msg, sizeof(notify_msg),
-               "請開啟 Antigravity Pilot 重建代理副本以同步新版。");
-      snprintf(dialog_msg, sizeof(dialog_msg),
-               "偵測到原版 Antigravity 已更新（%s → %s）。\n\n"
-               "請結束目前視窗後開啟 /Applications/Antigravity Pilot.app 重建代理副本以同步最新版本。\n"
-               "（目前代理：%s）",
-               built_ver, current_ver, ag_proxy);
+      subtitle = "原版 Antigravity 已更新";
+      notify_msg = "點擊開啟 Antigravity Pilot 重建代理副本。";
     } else if (is_zh_hans) {
-      ok_btn = "知道了";
-      snprintf(subtitle, sizeof(subtitle), "检测到原版 Antigravity 已更新（%s → %s）", built_ver, current_ver);
-      snprintf(notify_msg, sizeof(notify_msg),
-               "请打开 Antigravity Pilot 重建代理副本以同步新版。");
-      snprintf(dialog_msg, sizeof(dialog_msg),
-               "检测到原版 Antigravity 已更新（%s → %s）。\n\n"
-               "请退出当前窗口后打开 /Applications/Antigravity Pilot.app 重建代理副本以同步最新版本。\n"
-               "（当前代理：%s）",
-               built_ver, current_ver, ag_proxy);
+      subtitle = "原版 Antigravity 已更新";
+      notify_msg = "点击打开 Antigravity Pilot 重建代理副本。";
     } else if (is_ru) {
-      ok_btn = "Понятно";
-      snprintf(subtitle, sizeof(subtitle), "Оригинальный Antigravity обновлён (%s → %s)", built_ver, current_ver);
-      snprintf(notify_msg, sizeof(notify_msg),
-               "Откройте Antigravity Pilot, чтобы пересобрать копию.");
-      snprintf(dialog_msg, sizeof(dialog_msg),
-               "Оригинальный Antigravity обновлён (%s → %s).\n\n"
-               "Закройте это окно и откройте /Applications/Antigravity Pilot.app, чтобы пересобрать копию.\n"
-               "(Текущий прокси: %s)",
-               built_ver, current_ver, ag_proxy);
+      subtitle = "Antigravity обновлён";
+      notify_msg = "Нажмите, чтобы открыть Antigravity Pilot и пересобрать копию.";
     } else {
-      ok_btn = "OK";
-      snprintf(subtitle, sizeof(subtitle), "Original Antigravity updated (%s → %s)", built_ver, current_ver);
-      snprintf(notify_msg, sizeof(notify_msg),
-               "Open Antigravity Pilot to rebuild the runtime copy.");
-      snprintf(dialog_msg, sizeof(dialog_msg),
-               "Original Antigravity has been updated (%s → %s).\n\n"
-               "Quit this window and open /Applications/Antigravity Pilot.app to rebuild the runtime copy.\n"
-               "(Current proxy: %s)",
-               built_ver, current_ver, ag_proxy);
+      subtitle = "Original Antigravity updated";
+      notify_msg = "Click to open Antigravity Pilot to rebuild the runtime copy.";
     }
 
     const char *script =
@@ -317,18 +378,13 @@ static void spawn_startup_tip_async(void) {
         "  set tipTitle to item 1 of argv\n"
         "  set tipSub to item 2 of argv\n"
         "  set tipNotify to item 3 of argv\n"
-        "  set tipDialog to item 4 of argv\n"
-        "  set okLabel to item 5 of argv\n"
         "  try\n"
         "    display notification tipNotify with title tipTitle subtitle tipSub\n"
-        "  end try\n"
-        "  try\n"
-        "    display dialog tipDialog with title tipTitle buttons {okLabel} default button okLabel giving up after 4\n"
         "  end try\n"
         "end run\n";
 
     execl("/usr/bin/osascript", "osascript", "-e", script,
-          "Antigravity Pilot", subtitle, notify_msg, dialog_msg, ok_btn, (char *)NULL);
+          "Antigravity Pilot", subtitle, notify_msg, (char *)NULL);
     _exit(127);
   }
 
@@ -556,6 +612,7 @@ int main(int argc, char **argv) {
     fprintf(stderr, "NO_PROXY=%s\n", no_proxy_val ? no_proxy_val : "");
     fprintf(stderr, "NODE_USE_ENV_PROXY=%s\n", getenv("NODE_USE_ENV_PROXY") ? getenv("NODE_USE_ENV_PROXY") : "");
     fprintf(stderr, "AG_SOURCE_VERSION=%s\n", getenv("AG_SOURCE_VERSION") ? getenv("AG_SOURCE_VERSION") : "");
+    fprintf(stderr, "AG_PILOT_APP_PATH=%s\n", getenv("AG_PILOT_APP_PATH") ? getenv("AG_PILOT_APP_PATH") : "");
     for (int i = 0; i < out_argc; i++) {
       fprintf(stderr, "argv[%d]=%s\n", i, child_argv[i]);
     }

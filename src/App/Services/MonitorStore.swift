@@ -259,28 +259,137 @@ final class MonitorStore: ObservableObject {
         tightestQuotaPool ?? quotaPools.first
     }
 
-    var compactMenuBarText: String? {
+    var compactMetricsText: String? {
+        compactMetricsText(includeContext: true, includeQuota: true)
+    }
+
+    func compactMetricsText(includeContext: Bool, includeQuota: Bool) -> String? {
         guard liveHub != nil else { return nil }
-        let runningPrefix: String
-        if activeRunningSessionCount > 1 {
-            runningPrefix = "●\(activeRunningSessionCount) · "
-        } else if activeRunningSessionCount == 1 {
-            runningPrefix = "● "
-        } else {
-            runningPrefix = ""
+        return Self.formatMetricsText(
+            contextTokens: activeContext?.activeContextTokens,
+            quotaRemainingPercent: primaryQuotaPool?.remainingPercent,
+            quotaWindowKind: primaryQuotaPool?.tightestWindowKind ?? .unknown,
+            includeContext: includeContext,
+            includeQuota: includeQuota
+        )
+    }
+
+    nonisolated static func formatMetricsText(
+        contextTokens: Int?,
+        quotaRemainingPercent: Int?,
+        quotaWindowKind: QuotaWindowKind = .unknown,
+        includeContext: Bool,
+        includeQuota: Bool
+    ) -> String? {
+        var parts: [String] = []
+        if includeContext, let tokens = contextTokens {
+            parts.append(TokenFormatting.compactTokensShort(tokens))
+        }
+        if includeQuota, let pct = quotaRemainingPercent {
+            if quotaWindowKind == .weekly {
+                parts.append("7d \(pct)%")
+            } else {
+                parts.append("\(pct)%")
+            }
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    func menuBarTooltip(lang: AppLanguage) -> String {
+        let contextUsed = activeContext.map { TokenFormatting.compactTokens($0.activeContextTokens) }
+        let contextLimit = activeContext.map { TokenFormatting.compactTokens($0.contextLimitTokens) }
+        return Self.formatMenuBarTooltip(
+            isLive: liveHub != nil,
+            runningCount: activeRunningSessionCount,
+            contextUsedText: contextUsed,
+            contextLimitText: contextLimit,
+            modelDisplayName: activeContext?.modelDisplayName,
+            quotaTitle: primaryQuotaPool?.title,
+            quotaWindowKind: primaryQuotaPool?.tightestWindowKind,
+            quotaRemainingPercent: primaryQuotaPool?.remainingPercent,
+            quotaResetText: primaryQuotaPool?.resetCountdownText(lang),
+            lang: lang
+        )
+    }
+
+    nonisolated static func formatMenuBarTooltip(
+        isLive: Bool,
+        runningCount: Int,
+        contextUsedText: String?,
+        contextLimitText: String?,
+        modelDisplayName: String?,
+        quotaTitle: String?,
+        quotaWindowKind: QuotaWindowKind?,
+        quotaRemainingPercent: Int?,
+        quotaResetText: String?,
+        lang: AppLanguage
+    ) -> String {
+        guard isLive else {
+            return L10n.t(
+                zhHans: "Antigravity Pilot · 等待 Antigravity 启动",
+                zhHant: "Antigravity Pilot · 等待 Antigravity 啟動",
+                en: "Antigravity Pilot · Waiting for Antigravity",
+                ru: "Antigravity Pilot · Ожидание Antigravity",
+                lang
+            )
         }
 
-        var parts: [String] = []
-        if let ctx = activeContext {
-            parts.append(TokenFormatting.compactTokensShort(ctx.activeContextTokens))
+        var lines: [String] = []
+        if runningCount > 0 {
+            lines.append(L10n.t(
+                zhHans: "运行中：\(runningCount) 个活跃会话",
+                zhHant: "執行中：\(runningCount) 個活躍工作階段",
+                en: "Running: \(runningCount) active session\(runningCount == 1 ? "" : "s")",
+                ru: "Активно: \(runningCount) сесс.",
+                lang
+            ))
         }
-        if let quota = primaryQuotaPool {
-            parts.append("\(quota.remainingPercent)%")
+
+        if let used = contextUsedText, let limit = contextLimitText {
+            let modelSuffix = modelDisplayName.flatMap { $0.isEmpty ? nil : " (\($0))" } ?? ""
+            lines.append(L10n.t(
+                zhHans: "上下文：\(used) / \(limit)\(modelSuffix)",
+                zhHant: "上下文：\(used) / \(limit)\(modelSuffix)",
+                en: "Context: \(used) / \(limit)\(modelSuffix)",
+                ru: "Контекст: \(used) / \(limit)\(modelSuffix)",
+                lang
+            ))
         }
-        if parts.isEmpty {
-            return activeRunningSessionCount > 0 ? "●\(activeRunningSessionCount)" : nil
+
+        if let pct = quotaRemainingPercent {
+            let windowLabel = (quotaWindowKind ?? .unknown).shortLabel(lang)
+            let poolPrefix = (quotaTitle?.isEmpty == false) ? "\(quotaTitle!) · " : ""
+            let isCJK = lang.resolved == .zhHans || lang.resolved == .zhHant
+            let resetPart = (quotaResetText?.isEmpty == false)
+                ? (isCJK ? "（\(quotaResetText!)）" : " (\(quotaResetText!))")
+                : ""
+            lines.append(L10n.t(
+                zhHans: "最紧配额：\(poolPrefix)\(windowLabel) \(pct)%\(resetPart)",
+                zhHant: "最緊配額：\(poolPrefix)\(windowLabel) \(pct)%\(resetPart)",
+                en: "Tightest Quota: \(poolPrefix)\(windowLabel) \(pct)%\(resetPart)",
+                ru: "Мин. квота: \(poolPrefix)\(windowLabel) \(pct)%\(resetPart)",
+                lang
+            ))
         }
-        return runningPrefix + parts.joined(separator: " · ")
+
+        if lines.isEmpty {
+            return L10n.t(
+                zhHans: "Antigravity Pilot · 已连接",
+                zhHant: "Antigravity Pilot · 已連線",
+                en: "Antigravity Pilot · Connected",
+                ru: "Antigravity Pilot · Подключён",
+                lang
+            )
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    nonisolated static func formatMenuBarTitle(runningCount: Int, metricsText: String?) -> String {
+        let trimmedMetrics = metricsText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if runningCount > 1 {
+            return trimmedMetrics.isEmpty ? "\(runningCount)" : "\(runningCount) · \(trimmedMetrics)"
+        }
+        return trimmedMetrics.isEmpty ? "" : " \(trimmedMetrics)"
     }
 
     func lastUpdatedShortText(lang: AppLanguage, now: Date = Date()) -> String? {

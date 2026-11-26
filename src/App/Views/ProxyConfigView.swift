@@ -8,8 +8,13 @@ struct ProxyConfigView: View {
     var onHideToMenuBar: () -> Void
     var onOpenTab: (MainTab) -> Void
 
+    private enum AntigravityCheckPopover: Equatable {
+        case error
+        case upToDateNeedsRebuild
+    }
+
     @State private var showHealthPopover = false
-    @State private var showAntigravityErrorPopover = false
+    @State private var activeAntigravityPopover: AntigravityCheckPopover?
     @State private var showProxyDefaultsTipPopover = false
     @State private var isHoveringProxyTip = false
 
@@ -50,7 +55,7 @@ struct ProxyConfigView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 9) {
+            VStack(alignment: .leading, spacing: 8) {
                 if !appModel.runningInstances.isEmpty {
                     runningConflictBanner
                 }
@@ -71,6 +76,8 @@ struct ProxyConfigView: View {
 
                 quickActionsStrip
 
+                menuBarDisplayCard
+
                 if let error = appModel.errorMessage {
                     messageBanner(error, isError: true)
                 } else if let success = appModel.bannerSuccessMessage {
@@ -78,7 +85,7 @@ struct ProxyConfigView: View {
                 }
             }
             .padding(.horizontal, 20)
-            .padding(.vertical, 10)
+            .padding(.vertical, 9)
         }
         .onChange(of: appModel.config.host) { _ in
             appModel.scheduleProxyHealthCheck()
@@ -95,14 +102,24 @@ struct ProxyConfigView: View {
         .onChange(of: appModel.config.enableMenuBarMonitor) { _ in
             appModel.savePreferencesOnly()
         }
-        .onChange(of: appModel.config.showMenuBarMetrics) { _ in
-            appModel.savePreferencesOnly()
-        }
         .onChange(of: antigravityUpdateStore.state) { newState in
             if case .failed = newState {
-                showAntigravityErrorPopover = true
+                activeAntigravityPopover = .error
             } else {
-                showAntigravityErrorPopover = false
+                switch newState {
+                case .checking, .available, .downloading, .verifying, .replacingAndRebuilding:
+                    activeAntigravityPopover = nil
+                default:
+                    if activeAntigravityPopover == .error {
+                        activeAntigravityPopover = nil
+                    }
+                }
+            }
+        }
+        .onChange(of: antigravityUpdateStore.manualUpToDateEventCount) { _ in
+            appModel.refreshRuntimeStatus()
+            if appModel.runtimeStatusKind == .updateNeeded || appModel.runtimeStatusKind == .notBuilt {
+                activeAntigravityPopover = .upToDateNeedsRebuild
             }
         }
     }
@@ -142,6 +159,7 @@ struct ProxyConfigView: View {
                                 .font(.caption)
                                 .foregroundStyle(runtimeSummaryColor)
                                 .lineLimit(1)
+                                .truncationMode(.tail)
 
                             antigravityCheckButton
                         }
@@ -219,43 +237,40 @@ struct ProxyConfigView: View {
     private var proxySettingsCard: some View {
         PilotCard(padding: 12, fillHeight: true) {
             VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    HStack(spacing: 4) {
-                        Label(L10n.t("核心代理配置", "Core Proxy Settings", lang), systemImage: "network")
-                            .font(.subheadline.weight(.semibold))
+                HStack(spacing: 6) {
+                    Label(L10n.t("核心代理配置", "Core Proxy Settings", lang), systemImage: "network")
+                        .font(.subheadline.weight(.semibold))
+                        .lineLimit(1)
 
-                        Button {
-                            showProxyDefaultsTipPopover.toggle()
-                        } label: {
-                            Image(systemName: "info.circle")
-                                .font(.system(size: 12, weight: .medium))
-                                .foregroundStyle(
-                                    showProxyDefaultsTipPopover
-                                        ? Color.accentColor
-                                        : (isHoveringProxyTip ? .primary : .secondary)
-                                )
-                                .frame(width: 20, height: 20)
-                                .contentShape(Circle())
-                        }
-                        .buttonStyle(.plain)
-                        .onHover { hovering in
-                            isHoveringProxyTip = hovering
-                        }
-                        .help(L10n.t(
-                            zhHans: "默认配置说明：多数情况直接使用默认即可",
-                            zhHant: "預設設定說明：多數情況直接使用預設即可",
-                            en: "Default settings tip: works out of the box for most setups",
-                            ru: "Подсказка: обычно достаточно настроек по умолчанию",
-                            lang
-                        ))
-                        .popover(isPresented: $showProxyDefaultsTipPopover, arrowEdge: .bottom) {
-                            proxyDefaultsTipPopover
-                        }
+                    Spacer(minLength: 4)
+
+                    Button {
+                        showProxyDefaultsTipPopover.toggle()
+                    } label: {
+                        Image(systemName: "info.circle")
+                            .font(.system(size: 12.5, weight: .medium))
+                            .foregroundStyle(
+                                showProxyDefaultsTipPopover
+                                    ? Color.accentColor
+                                    : (isHoveringProxyTip ? .primary : .secondary)
+                            )
+                            .frame(width: 20, height: 20)
+                            .contentShape(Circle())
                     }
-                    Spacer()
-                    Text(appModel.config.hookProxyURL)
-                        .font(.system(.caption2, design: .monospaced))
-                        .foregroundStyle(.secondary)
+                    .buttonStyle(.plain)
+                    .onHover { hovering in
+                        isHoveringProxyTip = hovering
+                    }
+                    .help(L10n.t(
+                        zhHans: "默认配置说明：多数情况直接使用默认即可",
+                        zhHant: "預設設定說明：多數情況直接使用預設即可",
+                        en: "Default settings tip: works out of the box for most setups",
+                        ru: "Подсказка: обычно достаточно настроек по умолчанию",
+                        lang
+                    ))
+                    .popover(isPresented: $showProxyDefaultsTipPopover, arrowEdge: .bottom) {
+                        proxyDefaultsTipPopover
+                    }
                 }
 
                 VStack(spacing: 6) {
@@ -296,7 +311,29 @@ struct ProxyConfigView: View {
                         }
                     }
                 }
+
+                Spacer(minLength: 2)
+
+                HStack(spacing: 5) {
+                    Image(systemName: "link")
+                        .font(.system(size: 9.5, weight: .medium))
+                        .foregroundStyle(.tertiary)
+                    Text(appModel.config.hookProxyURL)
+                        .font(.system(.caption2, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .textSelection(.enabled)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4.5)
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(Color.primary.opacity(0.035))
+                )
             }
+            .frame(maxHeight: .infinity, alignment: .topLeading)
         }
     }
 
@@ -356,17 +393,24 @@ struct ProxyConfigView: View {
                     iconPreviewRow(
                         cacheKey: "option-badged",
                         title: L10n.t(
-                            zhHans: "原版 + 彩虹猫",
-                            zhHant: "原版 + 彩虹貓",
-                            en: "Original + Cat",
-                            ru: "Оригинал + Кот",
+                            zhHans: "角标",
+                            zhHant: "角標",
+                            en: "Badged",
+                            ru: "Со значком",
+                            lang
+                        ),
+                        badge: L10n.t(
+                            zhHans: "推荐",
+                            zhHant: "推薦",
+                            en: "Rec.",
+                            ru: "Рек.",
                             lang
                         ),
                         caption: L10n.t(
-                            zhHans: "三者零撞脸（推荐）",
-                            zhHant: "三者零撞臉（推薦）",
-                            en: "Distinct from both (Recommended)",
-                            ru: "Не путается с другими (Реком.)",
+                            zhHans: "三者零撞脸",
+                            zhHant: "三者零撞臉",
+                            en: "Distinct from both",
+                            ru: "Не путается с другими",
                             lang
                         ),
                         image: appModel.badgedRuntimeIcon,
@@ -376,34 +420,12 @@ struct ProxyConfigView: View {
                     }
 
                     iconPreviewRow(
-                        cacheKey: "option-pilot-cat",
-                        title: L10n.t(
-                            zhHans: "纯净彩虹猫",
-                            zhHant: "純淨彩虹貓",
-                            en: "Pure Rainbow Cat",
-                            ru: "Радужный кот",
-                            lang
-                        ),
-                        caption: L10n.t(
-                            zhHans: "与伴侣同款大猫图标",
-                            zhHant: "與伴侶同款大貓圖示",
-                            en: "Same mascot as Pilot",
-                            ru: "Как значок Pilot",
-                            lang
-                        ),
-                        image: appModel.pilotAppIcon,
-                        selected: appModel.config.runtimeIconStyle == .pilotCat
-                    ) {
-                        appModel.config.runtimeIconStyle = .pilotCat
-                    }
-
-                    iconPreviewRow(
                         cacheKey: "option-original",
                         title: L10n.t(
-                            zhHans: "原版图标",
-                            zhHant: "原版圖示",
-                            en: "Original Icon",
-                            ru: "Оригинальный",
+                            zhHans: "原版",
+                            zhHant: "原版",
+                            en: "Original",
+                            ru: "Оригинал",
                             lang
                         ),
                         caption: L10n.t(
@@ -417,6 +439,22 @@ struct ProxyConfigView: View {
                         selected: appModel.config.runtimeIconStyle == .original
                     ) {
                         appModel.config.runtimeIconStyle = .original
+                    }
+
+                    iconPreviewRow(
+                        cacheKey: "option-pilot-cat",
+                        title: "Pilot",
+                        caption: L10n.t(
+                            zhHans: "与 Pilot 同款图标",
+                            zhHant: "與 Pilot 同款圖示",
+                            en: "Same icon as Pilot",
+                            ru: "Как значок Pilot",
+                            lang
+                        ),
+                        image: appModel.pilotAppIcon,
+                        selected: appModel.config.runtimeIconStyle == .pilotCat
+                    ) {
+                        appModel.config.runtimeIconStyle = .pilotCat
                     }
                 }
 
@@ -436,6 +474,7 @@ struct ProxyConfigView: View {
     private func iconPreviewRow(
         cacheKey: String,
         title: String,
+        badge: String? = nil,
         caption: String,
         image: NSImage,
         selected: Bool,
@@ -456,10 +495,26 @@ struct ProxyConfigView: View {
                 .padding(-PilotIconCache.margin)
 
                 VStack(alignment: .leading, spacing: 1.5) {
-                    Text(title)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(selected ? .primary : .secondary)
-                        .lineLimit(1)
+                    HStack(spacing: 5) {
+                        Text(title)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(selected ? .primary : .secondary)
+                            .lineLimit(1)
+
+                        if let badge {
+                            Text(badge)
+                                .font(.system(size: 9.5, weight: .semibold))
+                                .foregroundStyle(Color.accentColor)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 1)
+                                .background(
+                                    Capsule()
+                                        .fill(Color.accentColor.opacity(0.12))
+                                )
+                                .lineLimit(1)
+                                .fixedSize(horizontal: true, vertical: false)
+                        }
+                    }
 
                     Text(caption)
                         .font(.caption2)
@@ -539,6 +594,159 @@ struct ProxyConfigView: View {
                     ))
             }
         }
+    }
+
+    private var menuBarDisplayCard: some View {
+        PilotCard(padding: 9) {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) {
+                    Label(
+                        L10n.t(
+                            zhHans: "菜单栏显示内容",
+                            zhHant: "選單列顯示內容",
+                            en: "Menu Bar Display",
+                            ru: "Элементы в строке меню",
+                            lang
+                        ),
+                        systemImage: "menubar.rectangle"
+                    )
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(1)
+
+                    Spacer(minLength: 8)
+
+                    Text(menuBarPreviewText)
+                        .font(.system(.caption2, design: .monospaced))
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                }
+
+                HStack(spacing: 8) {
+                    menuBarOptionTile(
+                        title: L10n.t(
+                            zhHans: "运行状态",
+                            zhHant: "執行狀態",
+                            en: "Running",
+                            ru: "Активность",
+                            lang
+                        ),
+                        sample: "◌2",
+                        isOn: appModel.config.showMenuBarRunningStatus
+                    ) {
+                        appModel.config.showMenuBarRunningStatus.toggle()
+                        appModel.config.syncMenuBarMetricsMasterFlag()
+                        appModel.savePreferencesOnly()
+                    }
+
+                    menuBarOptionTile(
+                        title: L10n.t(
+                            zhHans: "上下文",
+                            zhHant: "上下文",
+                            en: "Context",
+                            ru: "Контекст",
+                            lang
+                        ),
+                        sample: "18K",
+                        isOn: appModel.config.showMenuBarContextUsage
+                    ) {
+                        appModel.config.showMenuBarContextUsage.toggle()
+                        appModel.config.syncMenuBarMetricsMasterFlag()
+                        appModel.savePreferencesOnly()
+                    }
+
+                    menuBarOptionTile(
+                        title: L10n.t(
+                            zhHans: "剩余配额",
+                            zhHant: "剩餘配額",
+                            en: "Quota",
+                            ru: "Квота",
+                            lang
+                        ),
+                        sample: "47%",
+                        isOn: appModel.config.showMenuBarQuotaPercent
+                    ) {
+                        appModel.config.showMenuBarQuotaPercent.toggle()
+                        appModel.config.syncMenuBarMetricsMasterFlag()
+                        appModel.savePreferencesOnly()
+                    }
+                }
+            }
+        }
+        .disabled(!appModel.config.enableMenuBarMonitor || isBusy)
+        .opacity(appModel.config.enableMenuBarMonitor ? 1 : 0.55)
+    }
+
+    private var menuBarPreviewText: String {
+        guard appModel.config.enableMenuBarMonitor else {
+            return L10n.t(
+                zhHans: "菜单栏图标已关闭",
+                zhHant: "選單列圖示已關閉",
+                en: "Menu bar icon hidden",
+                ru: "Значок скрыт",
+                lang
+            )
+        }
+        var parts: [String] = []
+        if appModel.config.showMenuBarContextUsage {
+            parts.append("18K")
+        }
+        if appModel.config.showMenuBarQuotaPercent {
+            parts.append("47%")
+        }
+        let metrics = parts.joined(separator: " · ")
+        if appModel.config.showMenuBarRunningStatus {
+            return metrics.isEmpty ? "◌2" : "◌2 · \(metrics)"
+        }
+        if !metrics.isEmpty {
+            return metrics
+        }
+        return L10n.t(
+            zhHans: "仅显示图标",
+            zhHant: "僅顯示圖示",
+            en: "Icon only",
+            ru: "Только значок",
+            lang
+        )
+    }
+
+    private func menuBarOptionTile(
+        title: String,
+        sample: String,
+        isOn: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: isOn ? "checkmark.square.fill" : "square")
+                    .font(.system(size: 13))
+                    .foregroundStyle(isOn ? Color.accentColor : Color.secondary.opacity(0.45))
+
+                Text(title)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(isOn ? .primary : .secondary)
+                    .lineLimit(1)
+
+                Spacer(minLength: 4)
+
+                Text(sample)
+                    .font(.system(.caption2, design: .monospaced))
+                    .foregroundStyle(isOn ? Color.secondary : Color.secondary.opacity(0.45))
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, 9)
+            .padding(.vertical, 5.5)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(isOn ? Color.accentColor.opacity(0.08) : Color.primary.opacity(0.03))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(isOn ? Color.accentColor.opacity(0.45) : Color.primary.opacity(0.08), lineWidth: 1)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     private var pluginSummaryText: String {
@@ -672,41 +880,83 @@ struct ProxyConfigView: View {
     @ViewBuilder
     private var antigravityCheckButton: some View {
         HStack(spacing: 0) {
-            if case .checking = antigravityUpdateStore.state {
+            switch antigravityUpdateStore.state {
+            case .downloading, .verifying, .replacingAndRebuilding:
+                EmptyView()
+            case .checking:
                 ProgressView()
                     .controlSize(.mini)
-            } else if appModel.runtimeStatusKind != .missingSource {
-                Button {
-                    if case .failed = antigravityUpdateStore.state {
-                        showAntigravityErrorPopover.toggle()
-                    } else {
-                        antigravityUpdateStore.checkForUpdates(config: appModel.config, userInitiated: true)
-                    }
-                } label: {
-                    HStack(spacing: 3) {
-                        switch antigravityUpdateStore.state {
-                        case .upToDate where appModel.runtimeStatusKind == .ready:
-                            Image(systemName: "checkmark.circle.fill")
-                                .foregroundStyle(.green)
-                            Text(L10n.t("已是最新", "Up to Date", lang))
-                                .foregroundStyle(.green)
-                        case .failed:
-                            Image(systemName: "exclamationmark.circle.fill")
-                                .foregroundStyle(.red)
-                        default:
-                            Image(systemName: "arrow.down.circle")
-                                .foregroundStyle(.secondary)
+            default:
+                if appModel.runtimeStatusKind != .missingSource {
+                    Button {
+                        if case .failed = antigravityUpdateStore.state {
+                            activeAntigravityPopover = (activeAntigravityPopover == .error ? nil : .error)
+                        } else {
+                            appModel.refreshRuntimeStatus()
+                            if appModel.config.skippedAntigravityVersion != nil {
+                                appModel.config.skippedAntigravityVersion = nil
+                                appModel.savePreferencesOnly()
+                            }
+                            antigravityUpdateStore.checkForUpdates(config: appModel.config, userInitiated: true)
                         }
+                    } label: {
+                        HStack(spacing: 3) {
+                            switch antigravityUpdateStore.state {
+                            case .upToDate where appModel.runtimeStatusKind == .ready:
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundStyle(.green)
+                                Text(L10n.t("已是最新", "Up to Date", lang))
+                                    .foregroundStyle(.green)
+                            case .upToDate:
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundStyle(.green)
+                                Text(L10n.t(
+                                    zhHans: "原版最新",
+                                    zhHant: "原版最新",
+                                    en: "Source Latest",
+                                    ru: "Оригинал нов.",
+                                    lang
+                                ))
+                                .foregroundStyle(.green)
+                            case .available:
+                                Image(systemName: "arrow.down.circle.fill")
+                                    .foregroundStyle(.blue)
+                            case .failed:
+                                Image(systemName: "exclamationmark.circle.fill")
+                                    .foregroundStyle(.red)
+                            default:
+                                Image(systemName: "arrow.clockwise.circle")
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .font(.caption2.weight(.medium))
+                        .fixedSize(horizontal: true, vertical: false)
                     }
-                    .font(.caption2.weight(.medium))
+                    .buttonStyle(.plain)
+                    .disabled(isBusy)
+                    .help(antigravityCheckButtonHelp)
                 }
-                .buttonStyle(.plain)
-                .disabled(isBusy)
-                .help(antigravityCheckButtonHelp)
             }
         }
-        .popover(isPresented: $showAntigravityErrorPopover, arrowEdge: .bottom) {
-            antigravityErrorPopover
+        .popover(
+            isPresented: Binding(
+                get: { activeAntigravityPopover != nil },
+                set: { presented in
+                    if !presented {
+                        activeAntigravityPopover = nil
+                    }
+                }
+            ),
+            arrowEdge: .bottom
+        ) {
+            switch activeAntigravityPopover {
+            case .error:
+                antigravityErrorPopover
+            case .upToDateNeedsRebuild:
+                antigravityUpToDatePopover
+            case nil:
+                EmptyView()
+            }
         }
     }
 
@@ -736,6 +986,64 @@ struct ProxyConfigView: View {
         }
     }
 
+    private var antigravityUpToDatePopover: some View {
+        let installedVersion: String = {
+            if case .upToDate(let version, _, _) = antigravityUpdateStore.state {
+                return version
+            }
+            return ""
+        }()
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 7) {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+                Text(L10n.t(
+                    zhHans: "原版 Antigravity 已是最新",
+                    zhHant: "原版 Antigravity 已是最新",
+                    en: "Antigravity Source Is Up to Date",
+                    ru: "Оригинал Antigravity актуален",
+                    lang
+                ))
+                .font(.callout.weight(.semibold))
+            }
+
+            Text(L10n.t(
+                zhHans: "原版 Antigravity \(installedVersion) 已是官方最新版本。如需将代理副本同步至最新原版，请点击下方按钮重建副本并启动。",
+                zhHant: "原版 Antigravity \(installedVersion) 已是官方最新版本。如需將代理副本同步至最新原版，請點擊下方按鈕重建副本並啟動。",
+                en: "Original Antigravity \(installedVersion) is already the latest official release. Click below to rebuild and sync the runtime copy.",
+                ru: "Оригинальный Antigravity \(installedVersion) уже обновлён до последней версии. Нажмите ниже, чтобы пересобрать и синхронизировать копию.",
+                lang
+            ))
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+
+            HStack(spacing: 8) {
+                Spacer()
+                Button(L10n.t("关闭", "Dismiss", lang)) {
+                    activeAntigravityPopover = nil
+                }
+                .controlSize(.small)
+                .buttonStyle(.bordered)
+
+                Button(primaryButtonTitle) {
+                    activeAntigravityPopover = nil
+                    appModel.saveAndStart(
+                        forceRebuild: false,
+                        terminateRunningFirst: !appModel.runningInstances.isEmpty
+                    ) {
+                        onHideToMenuBar()
+                    }
+                }
+                .controlSize(.small)
+                .buttonStyle(.borderedProminent)
+                .disabled(isBusy)
+            }
+        }
+        .padding(12)
+        .frame(width: 285)
+    }
+
     private var antigravityErrorPopover: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 7) {
@@ -756,14 +1064,14 @@ struct ProxyConfigView: View {
             HStack(spacing: 8) {
                 Spacer()
                 Button(L10n.t("关闭", "Dismiss", lang)) {
-                    showAntigravityErrorPopover = false
+                    activeAntigravityPopover = nil
                     antigravityUpdateStore.dismissFailure()
                 }
                 .controlSize(.small)
                 .buttonStyle(.bordered)
 
                 Button(L10n.t("重试", "Retry", lang)) {
-                    showAntigravityErrorPopover = false
+                    activeAntigravityPopover = nil
                     antigravityUpdateStore.checkForUpdates(config: appModel.config, userInitiated: true)
                 }
                 .controlSize(.small)
