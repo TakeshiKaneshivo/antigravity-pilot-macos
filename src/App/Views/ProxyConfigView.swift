@@ -10,6 +10,8 @@ struct ProxyConfigView: View {
 
     @State private var showHealthPopover = false
     @State private var showAntigravityErrorPopover = false
+    @State private var showProxyDefaultsTipPopover = false
+    @State private var isHoveringProxyTip = false
 
     private var isBusy: Bool {
         appModel.isWorking || antigravityUpdateStore.state.isBusy
@@ -218,8 +220,38 @@ struct ProxyConfigView: View {
         PilotCard(padding: 12, fillHeight: true) {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
-                    Label(L10n.t("核心代理配置", "Core Proxy Settings", lang), systemImage: "network")
-                        .font(.subheadline.weight(.semibold))
+                    HStack(spacing: 4) {
+                        Label(L10n.t("核心代理配置", "Core Proxy Settings", lang), systemImage: "network")
+                            .font(.subheadline.weight(.semibold))
+
+                        Button {
+                            showProxyDefaultsTipPopover.toggle()
+                        } label: {
+                            Image(systemName: "info.circle")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(
+                                    showProxyDefaultsTipPopover
+                                        ? Color.accentColor
+                                        : (isHoveringProxyTip ? .primary : .secondary)
+                                )
+                                .frame(width: 20, height: 20)
+                                .contentShape(Circle())
+                        }
+                        .buttonStyle(.plain)
+                        .onHover { hovering in
+                            isHoveringProxyTip = hovering
+                        }
+                        .help(L10n.t(
+                            zhHans: "默认配置说明：多数情况直接使用默认即可",
+                            zhHant: "預設設定說明：多數情況直接使用預設即可",
+                            en: "Default settings tip: works out of the box for most setups",
+                            ru: "Подсказка: обычно достаточно настроек по умолчанию",
+                            lang
+                        ))
+                        .popover(isPresented: $showProxyDefaultsTipPopover, arrowEdge: .bottom) {
+                            proxyDefaultsTipPopover
+                        }
+                    }
                     Spacer()
                     Text(appModel.config.hookProxyURL)
                         .font(.system(.caption2, design: .monospaced))
@@ -278,6 +310,40 @@ struct ProxyConfigView: View {
             control()
                 .frame(maxWidth: .infinity)
         }
+    }
+
+    private var proxyDefaultsTipPopover: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            Label(
+                L10n.t(
+                    zhHans: "默认配置说明",
+                    zhHant: "預設設定說明",
+                    en: "Default Configuration Tip",
+                    ru: "Подсказка по настройке",
+                    lang
+                ),
+                systemImage: "lightbulb.fill"
+            )
+            .font(.callout.weight(.semibold))
+            .foregroundStyle(.primary)
+
+            Divider()
+
+            Text(
+                L10n.t(
+                    zhHans: "默认配置（127.0.0.1:7890）已适配 Clash / Mihomo 等常见代理工具的默认端口，大多数情况下无需修改即可直接使用。如使用其他代理软件或自定义端口，可在下方「常用预设」中一键切换，或按实际端口手动填写。",
+                    zhHant: "預設設定（127.0.0.1:7890）已適配 Clash / Mihomo 等常見代理工具的預設連接埠，大多數情況下無需修改即可直接使用。如使用其他代理軟體或自訂連接埠，可在下方「常用預設」中一鍵切換，或依實際連接埠手動填寫。",
+                    en: "The defaults (127.0.0.1:7890) work out of the box for most Clash / Mihomo setups—no changes needed. If you use another proxy client or a custom port, pick one from Presets below or enter your actual port.",
+                    ru: "Настройки по умолчанию (127.0.0.1:7890) сразу подходят для большинства клиентов Clash / Mihomo — обычно менять их не нужно. Для других клиентов или портов выберите вариант в «Пресеты» ниже или укажите свой порт.",
+                    lang
+                )
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(13)
+        .frame(width: 280)
     }
 
     private var iconStyleCard: some View {

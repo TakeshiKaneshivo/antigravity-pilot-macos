@@ -110,7 +110,7 @@ curl -fsSL https://raw.githubusercontent.com/TakeshiKaneshivo/antigravity-pilot-
 
 **Option B: Manual DMG download**
 
-Download `Antigravity-Pilot-v0.1.1-macOS13-universal.dmg` from [Releases](https://github.com/TakeshiKaneshivo/antigravity-pilot-macos/releases) (or see [Build from Source & Local Test](#build-from-source--local-test)), open the DMG, and drag `Antigravity Pilot.app` into `Applications`.
+Download `Antigravity-Pilot-v0.2.0-macOS13-universal.dmg` from [Releases](https://github.com/TakeshiKaneshivo/antigravity-pilot-macos/releases) (or see [Build from Source & Local Test](#build-from-source--local-test)), open the DMG, and drag `Antigravity Pilot.app` into `Applications`.
 
 > **Note**: Because the app is ad-hoc signed, if macOS reports **"is damaged and can't be opened"** or **"cannot be verified"** after a browser download, use Option A or clear quarantine in Terminal:
 >
@@ -192,9 +192,9 @@ Xcode Command Line Tools are required (`xcode-select --install`):
 npm --prefix src/McpAppWeb run typecheck && ./build.sh --build-web --dmg
 ```
 
-Options & overrides: pass `--notes-file <path>` for custom release notes; override `APP_VERSION` (default `0.1.1`), `MIN_MACOS` (default `13.0`), `ARCHS` (default `"arm64 x86_64"`), or `GITHUB_REPO`.
+Options & overrides: pass `--notes-file <path>` for custom release notes; override `APP_VERSION` (default `0.2.0`), `MIN_MACOS` (default `13.0`), `ARCHS` (default `"arm64 x86_64"`), or `GITHUB_REPO`.
 
-Outputs: `build/Antigravity Pilot.app`, `build/Antigravity-Pilot-v0.1.1-macOS13-universal.dmg`, `build/latest.json`, `build/antigravity-pilot-mcp`, `build/libantigravity_proxy.dylib`, `build/AntigravityProxyLauncher`, `build/test_client`.
+Outputs: `build/Antigravity Pilot.app`, `build/Antigravity-Pilot-v0.2.0-macOS13-universal.dmg`, `build/latest.json`, `build/antigravity-pilot-mcp`, `build/libantigravity_proxy.dylib`, `build/AntigravityProxyLauncher`, `build/test_client`.
 
 ### Automated Checks & Local SOCKS5 Test
 

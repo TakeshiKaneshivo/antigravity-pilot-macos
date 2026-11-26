@@ -110,7 +110,7 @@ curl -fsSL https://raw.githubusercontent.com/TakeshiKaneshivo/antigravity-pilot-
 
 **方式 B：手动下载 DMG**
 
-前往 [Releases](https://github.com/TakeshiKaneshivo/antigravity-pilot-macos/releases) 下载 `Antigravity-Pilot-v0.1.1-macOS13-universal.dmg`（或参考[本地构建与测试](#本地构建与测试)自行编译），打开镜像后将 `Antigravity Pilot.app` 拖入 `Applications`。
+前往 [Releases](https://github.com/TakeshiKaneshivo/antigravity-pilot-macos/releases) 下载 `Antigravity-Pilot-v0.2.0-macOS13-universal.dmg`（或参考[本地构建与测试](#本地构建与测试)自行编译），打开镜像后将 `Antigravity Pilot.app` 拖入 `Applications`。
 
 > **提示**：应用采用本地 ad-hoc 签名，若通过浏览器下载并首次打开时提示“**已损坏，无法打开**”或“**无法验证开发者**”，改用方式 A 或执行以下命令清除隔离属性即可：
 >
@@ -192,9 +192,9 @@ rm -rf "$HOME/.gemini/config/plugins/antigravity-pilot"
 npm --prefix src/McpAppWeb run typecheck && ./build.sh --build-web --dmg
 ```
 
-常用参数与环境变量：`--notes-file <path>` 可传入发布说明；支持 `APP_VERSION`（默认 `0.1.1`）、`MIN_MACOS`（默认 `13.0`）、`ARCHS`（默认 `"arm64 x86_64"`）、`GITHUB_REPO` 覆盖。
+常用参数与环境变量：`--notes-file <path>` 可传入发布说明；支持 `APP_VERSION`（默认 `0.2.0`）、`MIN_MACOS`（默认 `13.0`）、`ARCHS`（默认 `"arm64 x86_64"`）、`GITHUB_REPO` 覆盖。
 
-主要产物：`build/Antigravity Pilot.app`、`build/Antigravity-Pilot-v0.1.1-macOS13-universal.dmg`、`build/latest.json`、`build/antigravity-pilot-mcp`、`build/libantigravity_proxy.dylib`、`build/AntigravityProxyLauncher`、`build/test_client`。
+主要产物：`build/Antigravity Pilot.app`、`build/Antigravity-Pilot-v0.2.0-macOS13-universal.dmg`、`build/latest.json`、`build/antigravity-pilot-mcp`、`build/libantigravity_proxy.dylib`、`build/AntigravityProxyLauncher`、`build/test_client`。
 
 ### 自动化校验与本地抓包测试
 

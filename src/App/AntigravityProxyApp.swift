@@ -46,6 +46,7 @@ final class BuilderAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
     let antigravityUpdateStore = AntigravityUpdateStore()
     private var statusBarController: StatusBarController?
     private weak var mainWindow: NSWindow?
+    private var mainWindowMouseDownMonitor: Any?
     private var cancellables = Set<AnyCancellable>()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -123,8 +124,16 @@ final class BuilderAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
         !appModel.config.enableMenuBarMonitor
     }
 
+    func applicationWillTerminate(_ notification: Notification) {
+        if let monitor = mainWindowMouseDownMonitor {
+            NSEvent.removeMonitor(monitor)
+            mainWindowMouseDownMonitor = nil
+        }
+    }
+
     private func findAndConfigureMainWindow() -> NSWindow? {
         if let existing = mainWindow {
+            installMainWindowFocusDismissMonitorIfNeeded()
             return existing
         }
         for window in NSApplication.shared.windows where !(window is NSPanel) {
@@ -136,9 +145,53 @@ final class BuilderAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
             window.titlebarAppearsTransparent = true
             window.isMovableByWindowBackground = true
             window.isReleasedWhenClosed = false
+            installMainWindowFocusDismissMonitorIfNeeded()
             return window
         }
         return nil
+    }
+
+    private func installMainWindowFocusDismissMonitorIfNeeded() {
+        guard mainWindowMouseDownMonitor == nil else { return }
+        mainWindowMouseDownMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
+            guard let self, let window = event.window, window === self.mainWindow else {
+                return event
+            }
+
+            let activeControl: NSView?
+            if let textView = window.firstResponder as? NSTextView {
+                activeControl = (textView.delegate as? NSView) ?? textView
+            } else if let textField = window.firstResponder as? NSTextField {
+                activeControl = textField
+            } else {
+                activeControl = nil
+            }
+
+            guard let activeControl else {
+                return event
+            }
+
+            let localPoint = activeControl.convert(event.locationInWindow, from: nil)
+            if activeControl.bounds.contains(localPoint) {
+                return event
+            }
+
+            let hitView = window.contentView?.superview?.hitTest(event.locationInWindow)
+                ?? window.contentView?.hitTest(event.locationInWindow)
+            var cursor = hitView
+            while let current = cursor {
+                if let targetField = current as? NSTextField, targetField.isEditable, targetField.isEnabled {
+                    return event
+                }
+                if let targetTextView = current as? NSTextView, targetTextView.isEditable {
+                    return event
+                }
+                cursor = current.superview
+            }
+
+            window.makeFirstResponder(nil)
+            return event
+        }
     }
 
     func registerMainWindowIfNeeded() {
@@ -169,9 +222,12 @@ final class BuilderAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
         appModel.refreshRuntimeStatus()
         appModel.refreshRunningInstances()
 
-        if let window = mainWindow ?? NSApplication.shared.windows.first(where: { !($0 is NSPanel) && !$0.className.contains("NSStatusBar") }) {
+        if let window = findAndConfigureMainWindow() ?? NSApplication.shared.windows.first(where: { !($0 is NSPanel) && !$0.className.contains("NSStatusBar") }) {
             mainWindow = window
             window.delegate = self
+            if window.isMiniaturized {
+                window.deminiaturize(nil)
+            }
             window.makeKeyAndOrderFront(nil)
         }
         NSApp.activate(ignoringOtherApps: true)
@@ -190,9 +246,28 @@ final class StatusBarController: NSObject, NSPopoverDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem?
     private let popover = NSPopover()
     private var contextMenu: NSMenu?
+    nonisolated(unsafe) private var pendingSingleClickWorkItem: DispatchWorkItem?
+    nonisolated(unsafe) private var globalPopoverMonitor: Any?
+    nonisolated(unsafe) private var localPopoverMonitor: Any?
 
     var isPopoverShown: Bool {
         popover.isShown
+    }
+
+    private var hasVisibleMainWindow: Bool {
+        NSApplication.shared.windows.contains {
+            !($0 is NSPanel) && !$0.className.contains("NSStatusBar") && $0.isVisible && !$0.isMiniaturized
+        }
+    }
+
+    deinit {
+        pendingSingleClickWorkItem?.cancel()
+        if let global = globalPopoverMonitor {
+            NSEvent.removeMonitor(global)
+        }
+        if let local = localPopoverMonitor {
+            NSEvent.removeMonitor(local)
+        }
     }
 
     init(
@@ -212,7 +287,7 @@ final class StatusBarController: NSObject, NSPopoverDelegate, NSMenuDelegate {
         self.onQuit = onQuit
         super.init()
 
-        popover.behavior = .transient
+        popover.behavior = .applicationDefined
         popover.animates = true
         popover.delegate = self
         let hostingController = NSHostingController(
@@ -233,6 +308,7 @@ final class StatusBarController: NSObject, NSPopoverDelegate, NSMenuDelegate {
 
     func updateVisibilityAndTitle() {
         if !appModel.config.enableMenuBarMonitor {
+            cancelPendingSingleClick()
             closePopover()
             if let item = statusItem {
                 NSStatusBar.system.removeStatusItem(item)
@@ -248,7 +324,7 @@ final class StatusBarController: NSObject, NSPopoverDelegate, NSMenuDelegate {
                 button.imagePosition = .imageLeading
                 button.target = self
                 button.action = #selector(handleStatusButtonClick(_:))
-                button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+                button.sendAction(on: [.leftMouseDown, .rightMouseUp])
             }
             statusItem = item
         }
@@ -272,7 +348,57 @@ final class StatusBarController: NSObject, NSPopoverDelegate, NSMenuDelegate {
         return NSImage(systemSymbolName: "network.badge.shield.half.filled", accessibilityDescription: "Antigravity Pilot")
     }
 
+    private func cancelPendingSingleClick() {
+        pendingSingleClickWorkItem?.cancel()
+        pendingSingleClickWorkItem = nil
+    }
+
+    private func installPopoverDismissMonitors() {
+        removePopoverDismissMonitors()
+
+        globalPopoverMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.closePopover()
+            }
+        }
+
+        localPopoverMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .keyDown]) { [weak self] event in
+            guard let self, self.popover.isShown else { return event }
+
+            if event.type == .keyDown {
+                if event.keyCode == 53 {
+                    self.closePopover()
+                    return nil
+                }
+                return event
+            }
+
+            if let popWin = self.popover.contentViewController?.view.window, event.window === popWin {
+                return event
+            }
+            if let btnWin = self.statusItem?.button?.window, event.window === btnWin {
+                return event
+            }
+
+            self.closePopover()
+            return event
+        }
+    }
+
+    private func removePopoverDismissMonitors() {
+        if let global = globalPopoverMonitor {
+            NSEvent.removeMonitor(global)
+            globalPopoverMonitor = nil
+        }
+        if let local = localPopoverMonitor {
+            NSEvent.removeMonitor(local)
+            localPopoverMonitor = nil
+        }
+    }
+
     func closePopover() {
+        cancelPendingSingleClick()
+        removePopoverDismissMonitors()
         if popover.isShown {
             popover.performClose(nil)
         }
@@ -284,23 +410,46 @@ final class StatusBarController: NSObject, NSPopoverDelegate, NSMenuDelegate {
             return
         }
 
-        if event.type == .rightMouseUp || (event.type == .leftMouseUp && event.modifierFlags.contains(.control)) {
+        if event.type == .rightMouseUp
+            || event.type == .rightMouseDown
+            || (event.type == .leftMouseDown && event.modifierFlags.contains(.control)) {
+            cancelPendingSingleClick()
             closePopover()
             showContextMenu(from: sender)
-        } else {
-            togglePopover(sender)
+            return
         }
+
+        if event.clickCount >= 2 {
+            cancelPendingSingleClick()
+            closePopover()
+            onOpenMainWindow()
+            return
+        }
+
+        cancelPendingSingleClick()
+        let delay = min(NSEvent.doubleClickInterval, 0.25)
+        let workItem = DispatchWorkItem { [weak self, weak sender] in
+            guard let self, let sender else { return }
+            self.pendingSingleClickWorkItem = nil
+            self.togglePopover(sender)
+        }
+        pendingSingleClickWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
     }
 
     private func togglePopover(_ sender: NSStatusBarButton) {
         if popover.isShown {
-            popover.performClose(nil)
+            closePopover()
         } else {
             appModel.refreshRuntimeStatus()
             appModel.refreshRunningInstances()
             monitorStore.setInteractiveVisible(true)
             popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
-            NSApp.activate(ignoringOtherApps: true)
+            popover.contentViewController?.view.window?.orderFrontRegardless()
+            if !hasVisibleMainWindow {
+                NSApp.activate(ignoringOtherApps: true)
+            }
+            installPopoverDismissMonitors()
         }
     }
 
@@ -395,8 +544,8 @@ final class StatusBarController: NSObject, NSPopoverDelegate, NSMenuDelegate {
     }
 
     func popoverDidClose(_ notification: Notification) {
-        let hasVisibleMain = NSApplication.shared.windows.contains { !($0 is NSPanel) && !$0.className.contains("NSStatusBar") && $0.isVisible }
-        if !hasVisibleMain {
+        removePopoverDismissMonitors()
+        if !hasVisibleMainWindow {
             monitorStore.setInteractiveVisible(false)
         }
     }

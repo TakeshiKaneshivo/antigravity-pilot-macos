@@ -156,6 +156,15 @@ struct PilotTextField: NSViewRepresentable {
                 text.wrappedValue = next
             }
         }
+
+        func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+            if commandSelector == #selector(NSResponder.insertNewline(_:))
+                || commandSelector == #selector(NSResponder.cancelOperation(_:)) {
+                control.window?.makeFirstResponder(nil)
+                return true
+            }
+            return false
+        }
     }
 }
 
@@ -244,6 +253,15 @@ struct PilotPortTextField: NSViewRepresentable {
                 lastSyncedValue = current
                 field.stringValue = String(current)
             }
+        }
+
+        func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+            if commandSelector == #selector(NSResponder.insertNewline(_:))
+                || commandSelector == #selector(NSResponder.cancelOperation(_:)) {
+                control.window?.makeFirstResponder(nil)
+                return true
+            }
+            return false
         }
     }
 }
