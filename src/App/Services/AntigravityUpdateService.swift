@@ -204,6 +204,52 @@ enum AntigravityUpdateService {
         return manifest
     }
 
+    static func parseFeedCheckYAML(
+        _ yaml: String,
+        installedVersion: String,
+        baseURL: URL,
+        isArm64: Bool,
+        allowInsecureHTTP: Bool = false,
+        lang: AppLanguage = L10n.current
+    ) throws -> AntigravityFeedCheckResult {
+        var version = ""
+        for rawLine in yaml.components(separatedBy: .newlines) {
+            let trimmed = stripYAMLComment(rawLine).trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty { continue }
+            let leadingSpaces = rawLine.prefix(while: { $0 == " " || $0 == "\t" }).count
+            guard leadingSpaces == 0, !trimmed.hasPrefix("-"),
+                  let colonIdx = trimmed.firstIndex(of: ":") else {
+                continue
+            }
+            let key = trimmed[..<colonIdx].trimmingCharacters(in: .whitespacesAndNewlines)
+            if key == "version" {
+                version = stripYAMLQuotes(String(trimmed[trimmed.index(after: colonIdx)...]))
+                break
+            }
+        }
+
+        guard let remoteVer = AppVersion(version) else {
+            throw AntigravityUpdateError.invalidManifest(L10n.t(
+                "Antigravity 更新清单中的版本号无效。",
+                "Invalid version in Antigravity update manifest.",
+                lang
+            ))
+        }
+
+        if let localVer = AppVersion(installedVersion), remoteVer <= localVer {
+            return .upToDate(remoteVersion: version)
+        }
+
+        let manifest = try parseElectronUpdaterYAML(
+            yaml,
+            baseURL: baseURL,
+            isArm64: isArm64,
+            allowInsecureHTTP: allowInsecureHTTP,
+            lang: lang
+        )
+        return .updateAvailable(manifest)
+    }
+
     static func fetchManifest(
         sourceApp: URL,
         installedVersion: String,
@@ -211,7 +257,7 @@ enum AntigravityUpdateService {
         feedOverride: URL? = nil,
         allowInsecureHTTPOverride: Bool? = nil,
         isArm64: Bool = detectIsArm64Mac()
-    ) async throws -> (manifest: AntigravityUpdateManifest, route: UpdateRoute) {
+    ) async throws -> (result: AntigravityFeedCheckResult, route: UpdateRoute) {
         let resolved = resolvedFeedURL(from: sourceApp, isArm64: isArm64)
         let feedURL = feedOverride ?? resolved.url
         let allowHTTP = allowInsecureHTTPOverride ?? (
@@ -263,14 +309,15 @@ enum AntigravityUpdateService {
                     ))
                 }
 
-                let manifest = try parseElectronUpdaterYAML(
+                let result = try parseFeedCheckYAML(
                     yamlText,
+                    installedVersion: installedVersion,
                     baseURL: feedURL.deletingLastPathComponent(),
                     isArm64: isArm64,
                     allowInsecureHTTP: allowHTTP,
                     lang: config.appLanguage
                 )
-                return (manifest, route)
+                return (result, route)
             } catch is CancellationError {
                 throw CancellationError()
             } catch {

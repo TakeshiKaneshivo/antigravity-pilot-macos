@@ -9,6 +9,7 @@ struct ProxyConfigView: View {
     var onOpenTab: (MainTab) -> Void
 
     @State private var showHealthPopover = false
+    @State private var showAntigravityErrorPopover = false
 
     private var isBusy: Bool {
         appModel.isWorking || antigravityUpdateStore.state.isBusy
@@ -95,6 +96,13 @@ struct ProxyConfigView: View {
         .onChange(of: appModel.config.showMenuBarMetrics) { _ in
             appModel.savePreferencesOnly()
         }
+        .onChange(of: antigravityUpdateStore.state) { newState in
+            if case .failed = newState {
+                showAntigravityErrorPopover = true
+            } else {
+                showAntigravityErrorPopover = false
+            }
+        }
     }
 
     private var heroLaunchCard: some View {
@@ -118,13 +126,12 @@ struct ProxyConfigView: View {
                             Text(L10n.t("Antigravity Pilot 代理副本", "Antigravity Pilot Runtime", lang))
                                 .font(.headline.weight(.semibold))
                             PilotStatusPill(
-                                text: appModel.canHotUpdate
-                                    ? L10n.t("0.1s 免重建热更新", "0.1s Hot Update", lang)
-                                    : L10n.t("需重建/重签副本", "Rebuild Required", lang),
-                                color: appModel.canHotUpdate ? .green : .secondary,
+                                text: appModel.hotUpdateStatus.pillTitle(lang),
+                                color: hotUpdatePillColor,
                                 showDot: false,
                                 systemImage: appModel.canHotUpdate ? "bolt.fill" : "shippingbox"
                             )
+                            .help(appModel.hotUpdateStatus.detailReason(lang))
                         }
                         HStack(spacing: 6) {
                             Text(appModel.runtimeSummary)
@@ -556,39 +563,97 @@ struct ProxyConfigView: View {
 
     @ViewBuilder
     private var antigravityCheckButton: some View {
-        if case .checking = antigravityUpdateStore.state {
-            ProgressView()
-                .controlSize(.mini)
-        } else if appModel.runtimeStatusKind != .missingSource {
-            Button {
-                antigravityUpdateStore.checkForUpdates(config: appModel.config, userInitiated: true)
-            } label: {
-                HStack(spacing: 3) {
-                    if case .upToDate = antigravityUpdateStore.state {
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundStyle(.green)
-                        Text(L10n.t("已是最新", "Up to Date", lang))
-                            .foregroundStyle(.green)
+        HStack(spacing: 0) {
+            if case .checking = antigravityUpdateStore.state {
+                ProgressView()
+                    .controlSize(.mini)
+            } else if appModel.runtimeStatusKind != .missingSource {
+                Button {
+                    if case .failed = antigravityUpdateStore.state {
+                        showAntigravityErrorPopover.toggle()
                     } else {
-                        Image(systemName: "arrow.down.circle")
-                            .foregroundStyle(.secondary)
+                        antigravityUpdateStore.checkForUpdates(config: appModel.config, userInitiated: true)
                     }
+                } label: {
+                    HStack(spacing: 3) {
+                        switch antigravityUpdateStore.state {
+                        case .upToDate:
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(.green)
+                            Text(L10n.t("已是最新", "Up to Date", lang))
+                                .foregroundStyle(.green)
+                        case .failed:
+                            Image(systemName: "exclamationmark.circle.fill")
+                                .foregroundStyle(.red)
+                        default:
+                            Image(systemName: "arrow.down.circle")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .font(.caption2.weight(.medium))
                 }
-                .font(.caption2.weight(.medium))
+                .buttonStyle(.plain)
+                .disabled(isBusy)
+                .help(antigravityCheckButtonHelp)
             }
-            .buttonStyle(.plain)
-            .disabled(isBusy)
-            .help(L10n.t("检查 Antigravity 官方更新", "Check for Antigravity updates", lang))
         }
+        .popover(isPresented: $showAntigravityErrorPopover, arrowEdge: .bottom) {
+            antigravityErrorPopover
+        }
+    }
+
+    private var antigravityCheckButtonHelp: String {
+        if case .failed = antigravityUpdateStore.state {
+            return L10n.t("Antigravity 更新失败", "Antigravity Update Failed", lang)
+        }
+        return L10n.t("检查 Antigravity 官方更新", "Check for Antigravity updates", lang)
+    }
+
+    private var antigravityErrorPopover: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 7) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.red)
+                Text(L10n.t("Antigravity 更新失败", "Antigravity Update Failed", lang))
+                    .font(.callout.weight(.semibold))
+            }
+
+            if case .failed(let message, _) = antigravityUpdateStore.state {
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+            }
+
+            HStack(spacing: 8) {
+                Spacer()
+                Button(L10n.t("关闭", "Dismiss", lang)) {
+                    showAntigravityErrorPopover = false
+                    antigravityUpdateStore.dismissFailure()
+                }
+                .controlSize(.small)
+                .buttonStyle(.bordered)
+
+                Button(L10n.t("重试", "Retry", lang)) {
+                    showAntigravityErrorPopover = false
+                    antigravityUpdateStore.checkForUpdates(config: appModel.config, userInitiated: true)
+                }
+                .controlSize(.small)
+                .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding(12)
+        .frame(width: 280)
     }
 
     private var shouldShowAntigravityUpdateBanner: Bool {
         switch antigravityUpdateStore.state {
         case .available(_, let manifest, _, _):
             return manifest.version != appModel.config.skippedAntigravityVersion
-        case .downloading, .verifying, .replacingAndRebuilding, .readyForManualInstall, .failed:
+        case .downloading, .verifying, .replacingAndRebuilding, .readyForManualInstall:
             return true
-        case .idle, .checking, .upToDate:
+        case .idle, .checking, .upToDate, .failed:
             return false
         }
     }
@@ -720,34 +785,7 @@ struct ProxyConfigView: View {
                 }
             }
 
-        case .failed(let message, _):
-            PilotCard(padding: 9, accentTint: .red) {
-                HStack(spacing: 8) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.red)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(L10n.t("Antigravity 更新失败", "Antigravity Update Failed", lang))
-                            .font(.callout.weight(.semibold))
-                        Text(message)
-                            .font(.caption2)
-                            .foregroundStyle(.red)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    Spacer(minLength: 8)
-                    Button(L10n.t("重试", "Retry", lang)) {
-                        antigravityUpdateStore.checkForUpdates(config: appModel.config, userInitiated: true)
-                    }
-                    .controlSize(.small)
-                    .buttonStyle(.bordered)
-                    Button(L10n.t("关闭", "Dismiss", lang)) {
-                        antigravityUpdateStore.dismissFailure()
-                    }
-                    .controlSize(.small)
-                    .buttonStyle(.borderless)
-                }
-            }
-
-        case .idle, .checking, .upToDate:
+        case .idle, .checking, .upToDate, .failed:
             EmptyView()
         }
     }
@@ -764,6 +802,18 @@ struct ProxyConfigView: View {
                     .foregroundStyle(color)
                     .fixedSize(horizontal: false, vertical: true)
             }
+        }
+    }
+
+    private var hotUpdatePillColor: Color {
+        switch appModel.hotUpdateStatus {
+        case .hotUpdateReady:
+            return .green
+        case .missingSourceApp, .runtimeNotBuilt:
+            return .secondary
+        case .runtimeIncomplete, .proxyBinaryUpdated, .legacyUpdaterPresent,
+             .sourceVersionChanged, .iconStyleChanged, .pilotIconUpdated, .signatureInvalid:
+            return .orange
         }
     }
 

@@ -43,6 +43,7 @@ struct McpPluginInstaller {
         let mcpConfig = pluginDir.appendingPathComponent("mcp_config.json")
         let binDest = pluginDir.appendingPathComponent("bin/antigravity-pilot-mcp")
         let htmlDest = pluginDir.appendingPathComponent("assets/dashboard.html")
+        let logoDest = pluginDir.appendingPathComponent("assets/logo.png")
 
         guard fm.fileExists(atPath: pluginDir.path) else {
             return .notInstalled
@@ -61,9 +62,13 @@ struct McpPluginInstaller {
         let installedVersion = readInstalledVersion(from: pluginJson) ?? L10n.t("未知", "Unknown")
         let binMatches = sha256File(assets.mcpBinary) == sha256File(binDest)
         let htmlMatches = sha256File(assets.dashboardHTML) == sha256File(htmlDest)
+        let logoMatches: Bool = {
+            guard let bundledLogo = assets.logoPNG else { return true }
+            return sha256File(bundledLogo) == sha256File(logoDest)
+        }()
         let configMatches = (try? Data(contentsOf: mcpConfig)) == (try? expectedMCPConfigData(appVersion: bundledVersion))
 
-        if binMatches && htmlMatches && configMatches && installedVersion == bundledVersion {
+        if binMatches && htmlMatches && logoMatches && configMatches && installedVersion == bundledVersion {
             return .installedCurrent(version: installedVersion)
         }
         return .updateAvailable(installedVersion: installedVersion, bundledVersion: bundledVersion)

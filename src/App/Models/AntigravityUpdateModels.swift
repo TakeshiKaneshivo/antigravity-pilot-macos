@@ -49,6 +49,11 @@ struct AntigravityUpdateManifest: Equatable, Sendable {
     }
 }
 
+enum AntigravityFeedCheckResult: Equatable, Sendable {
+    case upToDate(remoteVersion: String)
+    case updateAvailable(AntigravityUpdateManifest)
+}
+
 enum AntigravityInstallEligibility: Equatable, Sendable {
     case inPlaceSupported(targetApp: URL)
     case manualFallbackRequired(reason: String)

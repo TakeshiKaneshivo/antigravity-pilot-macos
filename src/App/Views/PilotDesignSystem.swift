@@ -768,7 +768,7 @@ struct PilotHealthChainView: View {
             arrowSeparator
             stepNode(
                 label: L10n.t("3. 外网", "3. Net", lang),
-                detail: report.latencyMs.map { "\($0) ms" } ?? "204",
+                detail: (report.internetReachable == true ? report.latencyMs.map { "\($0) ms" } : nil) ?? "204",
                 passed: report.level == .checking ? nil : report.internetReachable
             )
             arrowSeparator

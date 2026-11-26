@@ -138,11 +138,199 @@ struct BuilderResources {
     let dylib: URL
     let launcher: URL
     let iconPNG: URL
+    let iconICNS: URL?
 }
 
 struct RuntimeIcon {
     let name: String
     let icns: URL
+}
+
+enum HotUpdateCheckResult: Equatable, Sendable {
+    case hotUpdateReady
+    case missingSourceApp
+    case runtimeNotBuilt
+    case runtimeIncomplete
+    case proxyBinaryUpdated
+    case legacyUpdaterPresent
+    case sourceVersionChanged
+    case iconStyleChanged
+    case pilotIconUpdated
+    case signatureInvalid
+
+    var canHotUpdate: Bool {
+        self == .hotUpdateReady
+    }
+
+    func pillTitle(_ lang: AppLanguage) -> String {
+        switch self {
+        case .hotUpdateReady:
+            return L10n.t(
+                zhHans: "0.1s 免重建热更新",
+                zhHant: "0.1s 免重建熱更新",
+                en: "0.1s Hot Update",
+                ru: "0.1с Хот-апдейт",
+                lang
+            )
+        case .missingSourceApp:
+            return L10n.t(
+                zhHans: "未找到原版",
+                zhHant: "未找到原版",
+                en: "Source Missing",
+                ru: "Нет оригинала",
+                lang
+            )
+        case .runtimeNotBuilt:
+            return L10n.t(
+                zhHans: "需首次构建副本",
+                zhHant: "需首次建置副本",
+                en: "Build Required",
+                ru: "Нужна сборка",
+                lang
+            )
+        case .runtimeIncomplete:
+            return L10n.t(
+                zhHans: "需重建 · 副本不完整",
+                zhHant: "需重建 · 副本不完整",
+                en: "Rebuild · Incomplete",
+                ru: "Пересборка · Неполная",
+                lang
+            )
+        case .proxyBinaryUpdated:
+            return L10n.t(
+                zhHans: "需重建 · 代理组件已更新",
+                zhHant: "需重建 · 代理元件已更新",
+                en: "Rebuild · Binary Updated",
+                ru: "Пересборка · Компоненты",
+                lang
+            )
+        case .legacyUpdaterPresent:
+            return L10n.t(
+                zhHans: "需重建 · 停用旧更新器",
+                zhHant: "需重建 · 停用舊更新器",
+                en: "Rebuild · Legacy Updater",
+                ru: "Пересборка · Обновление",
+                lang
+            )
+        case .sourceVersionChanged:
+            return L10n.t(
+                zhHans: "需重建 · 原版已更新",
+                zhHant: "需重建 · 原版已更新",
+                en: "Rebuild · App Updated",
+                ru: "Пересборка · Новая IDE",
+                lang
+            )
+        case .iconStyleChanged:
+            return L10n.t(
+                zhHans: "需重建 · 图标已切换",
+                zhHant: "需重建 · 圖示已切換",
+                en: "Rebuild · Icon Changed",
+                ru: "Пересборка · Значок",
+                lang
+            )
+        case .pilotIconUpdated:
+            return L10n.t(
+                zhHans: "需重建 · 新图标可用",
+                zhHant: "需重建 · 新圖示可用",
+                en: "Rebuild · New Icon",
+                ru: "Пересборка · Новый значок",
+                lang
+            )
+        case .signatureInvalid:
+            return L10n.t(
+                zhHans: "需重建 · 签名需修复",
+                zhHant: "需重建 · 簽章需修復",
+                en: "Rebuild · Re-sign Needed",
+                ru: "Пересборка · Подпись",
+                lang
+            )
+        }
+    }
+
+    func detailReason(_ lang: AppLanguage) -> String {
+        switch self {
+        case .hotUpdateReady:
+            return L10n.t(
+                zhHans: "代理副本与原版版本、核心组件、图标及签名均一致；修改端口或绕过规则将直接写入外置 proxy.env，0.1s 热更新启动。",
+                zhHant: "代理副本與原版版本、核心元件、圖示及簽章均一致；修改連接埠或繞過規則將直接寫入外置 proxy.env，0.1s 熱更新啟動。",
+                en: "Runtime copy matches source version, proxy binaries, icon, and signature; port or NO_PROXY edits write directly to external proxy.env in 0.1s.",
+                ru: "Копия совпадает с оригиналом, компонентами, значком и подписью; смена портов или NO_PROXY обновляет proxy.env за 0.1 с.",
+                lang
+            )
+        case .missingSourceApp:
+            return L10n.t(
+                zhHans: "未检测到原版 /Applications/Antigravity.app，请先安装原版应用。",
+                zhHant: "未偵測到原版 /Applications/Antigravity.app，請先安裝原版應用。",
+                en: "Original /Applications/Antigravity.app was not found. Install it first.",
+                ru: "Оригинальный /Applications/Antigravity.app не найден. Сначала установите его.",
+                lang
+            )
+        case .runtimeNotBuilt:
+            return L10n.t(
+                zhHans: "尚未创建用户空间代理副本，点击右侧按钮将从原版应用生成并签名隔离副本。",
+                zhHant: "尚未建立使用者空間代理副本，點擊右側按鈕將從原版應用產生並簽署隔離副本。",
+                en: "Isolated proxy copy does not exist yet. Click the button on the right to build and sign it.",
+                ru: "Изолированная копия ещё не создана. Нажмите кнопку справа для сборки и подписи.",
+                lang
+            )
+        case .runtimeIncomplete:
+            return L10n.t(
+                zhHans: "代理副本缺少启动器或代理动态库，需要重建副本以恢复完整性。",
+                zhHant: "代理副本缺少啟動器或代理動態函式庫，需要重建副本以恢復完整性。",
+                en: "Runtime copy is missing the launcher or proxy dylib and must be rebuilt.",
+                ru: "В копии отсутствуют лаунчер или библиотека прокси — требуется пересборка.",
+                lang
+            )
+        case .proxyBinaryUpdated:
+            return L10n.t(
+                zhHans: "当前 Pilot 内置的启动器或 dylib 代理核心已更新，需要重建副本以同步最新代理内核。",
+                zhHant: "目前 Pilot 內建的啟動器或 dylib 代理核心已更新，需要重建副本以同步最新代理核心。",
+                en: "Bundled launcher or proxy dylib has been updated. Rebuild the runtime copy to apply the new binaries.",
+                ru: "Встроенный лаунчер или dylib прокси обновились — пересоберите копию для их применения.",
+                lang
+            )
+        case .legacyUpdaterPresent:
+            return L10n.t(
+                zhHans: "检测到旧版副本内保留了 app-update.yml，需一次性重建以停用副本内自更新报错循环。",
+                zhHant: "偵測到舊版副本內保留了 app-update.yml，需一次性重建以停用副本內自更新報錯迴圈。",
+                en: "Legacy app-update.yml detected inside the copy. One-time rebuild removes it to stop Squirrel error loops.",
+                ru: "В копии найден устаревший app-update.yml. Разовая пересборка отключит цикл ошибок Squirrel.",
+                lang
+            )
+        case .sourceVersionChanged:
+            return L10n.t(
+                zhHans: "检测到 /Applications/Antigravity.app 版本或构建号已变化，需重建代理副本以同步原版更新。",
+                zhHant: "偵測到 /Applications/Antigravity.app 版本或建置號已變更，需重建代理副本以同步原版更新。",
+                en: "Source /Applications/Antigravity.app version or build changed. Rebuild the runtime copy to stay in sync.",
+                ru: "Версия или сборка /Applications/Antigravity.app изменились — пересоберите копию.",
+                lang
+            )
+        case .iconStyleChanged:
+            return L10n.t(
+                zhHans: "应用图标样式已切换（Pilot 标识 ↔ 原版图标），需重新打包并签名代理副本生效。",
+                zhHant: "應用圖示樣式已切換（Pilot 識別 ↔ 原版圖示），需重新打包並簽署代理副本生效。",
+                en: "App icon style changed (Pilot Icon vs Original). Rebuild and re-sign the runtime copy to apply.",
+                ru: "Изменён стиль значка (Pilot / Оригинал) — требуется пересборка и переподпись копии.",
+                lang
+            )
+        case .pilotIconUpdated:
+            return L10n.t(
+                zhHans: "检测到新版 Pilot 图标，点击右侧按钮重建代理副本后，将同步更新 Dock 与应用窗口图标。",
+                zhHant: "偵測到新版 Pilot 圖示，點擊右側按鈕重建代理副本後，將同步更新 Dock 與應用視窗圖示。",
+                en: "A new Pilot icon is available. Rebuild the runtime copy to update your Dock and app window icon.",
+                ru: "Доступен новый значок Pilot. Пересоберите копию, чтобы обновить значок в Dock и окне.",
+                lang
+            )
+        case .signatureInvalid:
+            return L10n.t(
+                zhHans: "代理副本当前代码签名校验未通过，需重建并重新本地签名后才能启动。",
+                zhHant: "代理副本目前程式碼簽章驗證未通過，需重建並重新本機簽署後才能啟動。",
+                en: "Runtime copy failed quick code-signature verification and needs to be rebuilt and re-signed.",
+                ru: "Проверка подписи копии не пройдена — требуется пересборка и переподпись.",
+                lang
+            )
+        }
+    }
 }
 
 final class RuntimeBuilder {
@@ -157,15 +345,19 @@ final class RuntimeBuilder {
         self.progress = progress
     }
 
-    static func canFastHotUpdate(config: ProxyConfig, support: AppSupport = AppSupport()) -> Bool {
+    static func evaluateHotUpdate(config: ProxyConfig, support: AppSupport = AppSupport()) -> HotUpdateCheckResult {
         let runtime = support.runtimeApp
         let source = support.sourceApp
         let fm = FileManager.default
 
-        guard fm.fileExists(atPath: source.path),
-              fm.fileExists(atPath: runtime.path),
-              let resourcePath = Bundle.main.resourcePath else {
-            return false
+        guard fm.fileExists(atPath: source.path) else {
+            return .missingSourceApp
+        }
+        guard fm.fileExists(atPath: runtime.path) else {
+            return .runtimeNotBuilt
+        }
+        guard let resourcePath = Bundle.main.resourcePath else {
+            return .runtimeIncomplete
         }
 
         let builderBase = URL(fileURLWithPath: resourcePath, isDirectory: true)
@@ -175,37 +367,53 @@ final class RuntimeBuilder {
         let runtimeDylib = runtime.appendingPathComponent("Contents/Resources/libantigravity_proxy.dylib")
 
         guard fm.fileExists(atPath: runtimeLauncher.path),
-              fm.fileExists(atPath: runtimeDylib.path),
-              sha256File(builderLauncher) == sha256File(runtimeLauncher),
+              fm.fileExists(atPath: runtimeDylib.path) else {
+            return .runtimeIncomplete
+        }
+
+        guard sha256File(builderLauncher) == sha256File(runtimeLauncher),
               sha256File(builderDylib) == sha256File(runtimeDylib) else {
-            return false
+            return .proxyBinaryUpdated
         }
 
         let sourcePlist = source.appendingPathComponent("Contents/Info.plist")
         let runtimeProxyEnv = runtime.appendingPathComponent("Contents/Resources/proxy.env")
         let runtimeAppUpdateYML = runtime.appendingPathComponent("Contents/Resources/app-update.yml")
         if fm.fileExists(atPath: runtimeAppUpdateYML.path) {
-            return false
+            return .legacyUpdaterPresent
         }
 
         let sourceVersion = readBundleShortVersion(at: sourcePlist)
         let builtVersion = readEnvValue(key: "AG_SOURCE_VERSION", from: runtimeProxyEnv)
         if !sourceVersion.isEmpty && sourceVersion != builtVersion {
-            return false
+            return .sourceVersionChanged
         }
 
         let sourceBuild = readBundleVersion(at: sourcePlist)
         let builtBuild = readEnvValue(key: "AG_SOURCE_BUILD", from: runtimeProxyEnv)
         if !sourceBuild.isEmpty, let builtBuild, !builtBuild.isEmpty, sourceBuild != builtBuild {
-            return false
+            return .sourceVersionChanged
         }
 
         let runtimeUsesOriginal = isRuntimeUsingOriginalIcon(app: runtime)
         if runtimeUsesOriginal != config.useOriginalIcon {
-            return false
+            return .iconStyleChanged
         }
 
-        return verifySignatureQuick(app: runtime)
+        if !config.useOriginalIcon {
+            let builderIconICNS = builderBase.appendingPathComponent("antigravity-pilot.icns")
+            let runtimeIconICNS = runtime.appendingPathComponent("Contents/Resources/antigravity-pilot.icns")
+            if fm.fileExists(atPath: builderIconICNS.path),
+               sha256File(builderIconICNS) != sha256File(runtimeIconICNS) {
+                return .pilotIconUpdated
+            }
+        }
+
+        return verifySignatureQuick(app: runtime) ? .hotUpdateReady : .signatureInvalid
+    }
+
+    static func canFastHotUpdate(config: ProxyConfig, support: AppSupport = AppSupport()) -> Bool {
+        evaluateHotUpdate(config: config, support: support).canHotUpdate
     }
 
     func applyAndLaunch(forceRebuild: Bool = false) throws -> BuildApplyOutcome {
@@ -344,10 +552,12 @@ final class RuntimeBuilder {
             throw BuilderError.missingResource("Resources")
         }
         let base = URL(fileURLWithPath: resourcePath, isDirectory: true)
+        let iconICNS = base.appendingPathComponent("antigravity-pilot.icns")
         let resources = BuilderResources(
             dylib: base.appendingPathComponent("libantigravity_proxy.dylib"),
             launcher: base.appendingPathComponent("AntigravityProxyLauncher"),
-            iconPNG: base.appendingPathComponent("icon.png")
+            iconPNG: base.appendingPathComponent("icon.png"),
+            iconICNS: fileManager.fileExists(atPath: iconICNS.path) ? iconICNS : nil
         )
         for url in [resources.dylib, resources.launcher, resources.iconPNG] {
             guard fileManager.fileExists(atPath: url.path) else {
@@ -455,7 +665,11 @@ final class RuntimeBuilder {
         let iconName = "antigravity-pilot.icns"
         let iconURL = appResources.appendingPathComponent(iconName)
         try? fileManager.removeItem(at: iconURL)
-        try generateICNS(from: resources.iconPNG, to: iconURL)
+        if let bundledICNS = resources.iconICNS, fileManager.fileExists(atPath: bundledICNS.path) {
+            try fileManager.copyItem(at: bundledICNS, to: iconURL)
+        } else {
+            try generateICNS(from: resources.iconPNG, to: iconURL)
+        }
         return RuntimeIcon(name: iconName, icns: iconURL)
     }
 
@@ -971,6 +1185,7 @@ final class AppModel: ObservableObject {
     @Published var healthReport: ProxyHealthReport = .checking
     @Published var runningInstances: [RunningInstanceInfo] = []
     @Published var canHotUpdate: Bool = false
+    @Published var hotUpdateStatus: HotUpdateCheckResult = .runtimeNotBuilt
     @Published var loginItemEnabled: Bool = LoginItemManager.isEnabled
     @Published var loginItemStatus: String = LoginItemManager.statusDescription
     @Published var mcpPluginStatus: McpPluginStatus = .notInstalled
@@ -1024,7 +1239,7 @@ final class AppModel: ObservableObject {
         refreshRuntimeStatus()
         refreshRunningInstances()
         refreshLoginItemState()
-        refreshMcpPluginStatus()
+        refreshMcpPluginStatus(autoSyncIfOutdated: true)
         checkProxyHealth()
     }
 
@@ -1081,6 +1296,7 @@ final class AppModel: ObservableObject {
                 lang
             )
             runtimeStatusKind = .missingSource
+            hotUpdateStatus = .missingSourceApp
             canHotUpdate = false
             return
         }
@@ -1094,6 +1310,7 @@ final class AppModel: ObservableObject {
                 lang
             )
             runtimeStatusKind = .notBuilt
+            hotUpdateStatus = .runtimeNotBuilt
             canHotUpdate = false
         } else if let builtVersion, !builtVersion.isEmpty {
             if builtVersion == sourceVersion && !buildMismatch && !hasLegacyUpdaterConfig {
@@ -1138,10 +1355,21 @@ final class AppModel: ObservableObject {
         let currentCfg = config
         let currentSupport = support
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            let fast = RuntimeBuilder.canFastHotUpdate(config: currentCfg, support: currentSupport)
+            let evaluation = RuntimeBuilder.evaluateHotUpdate(config: currentCfg, support: currentSupport)
             DispatchQueue.main.async {
                 guard let self, self.runtimeStatusGeneration == gen else { return }
-                self.canHotUpdate = fast
+                self.hotUpdateStatus = evaluation
+                self.canHotUpdate = evaluation.canHotUpdate
+                if evaluation == .pilotIconUpdated, self.runtimeStatusKind == .ready {
+                    self.runtimeStatusKind = .updateNeeded
+                    self.runtimeSummary = L10n.t(
+                        zhHans: "原版 \(sourceVersion) · 检测到新 Pilot 图标，点击右侧重建以同步 Dock",
+                        zhHant: "原版 \(sourceVersion) · 偵測到新 Pilot 圖示，點擊右側重建以同步 Dock",
+                        en: "Source \(sourceVersion) · New Pilot icon ready — click Rebuild to update Dock",
+                        ru: "Оригинал \(sourceVersion) · Новый значок Pilot — пересоберите для обновления Dock",
+                        lang
+                    )
+                }
             }
         }
     }
@@ -1155,14 +1383,23 @@ final class AppModel: ObservableObject {
         loginItemStatus = LoginItemManager.statusDescription(for: config.appLanguage)
     }
 
-    func refreshMcpPluginStatus() {
+    func refreshMcpPluginStatus(autoSyncIfOutdated: Bool = false) {
         mcpStatusGeneration += 1
         let gen = mcpStatusGeneration
         let currentSupport = support
         let bundledVersion = appVersionText
+        let lang = config.appLanguage
+        let shouldAutoSync = autoSyncIfOutdated && !isUpdatingMcpPlugin
         Task { [weak self] in
             let nextStatus = await Task.detached(priority: .utility) {
-                McpPluginInstaller(support: currentSupport).status(bundledVersion: bundledVersion)
+                let installer = McpPluginInstaller(support: currentSupport)
+                var status = installer.status(bundledVersion: bundledVersion)
+                if shouldAutoSync, case .updateAvailable = status {
+                    if (try? installer.installOrUpdate(appVersion: bundledVersion, language: lang)) != nil {
+                        status = installer.status(bundledVersion: bundledVersion)
+                    }
+                }
+                return status
             }.value
             guard let self, self.mcpStatusGeneration == gen else { return }
             self.mcpPluginStatus = nextStatus

@@ -102,9 +102,17 @@
 
 ### Шаг 1: Скачайте и установите Antigravity Pilot.app
 
-Скачайте `Antigravity-Pilot-v0.1.0-macOS13-universal.dmg` на странице [Releases](https://github.com/TakeshiKaneshivo/antigravity-pilot-macos/releases) (или соберите по разделу [Сборка и тестирование](#сборка-и-тестирование)) и перетащите `Antigravity Pilot.app` в `Applications`.
+**Вариант A: Установка одной командой (рекомендуется — проверяет SHA-256 и избавляет от блокировки Gatekeeper)**
 
-> **Примечание**: приложение имеет локальную ad-hoc подпись. Если macOS сообщает о повреждении файла или неизвестном разработчике, снимите карантин:
+```bash
+curl -fsSL https://raw.githubusercontent.com/TakeshiKaneshivo/antigravity-pilot-macos/main/install.sh | bash
+```
+
+**Вариант B: Ручная загрузка DMG**
+
+Скачайте `Antigravity-Pilot-v0.1.1-macOS13-universal.dmg` на странице [Releases](https://github.com/TakeshiKaneshivo/antigravity-pilot-macos/releases) (или соберите по разделу [Сборка и тестирование](#сборка-и-тестирование)) и перетащите `Antigravity Pilot.app` в `Applications`.
+
+> **Примечание**: приложение имеет локальную ad-hoc подпись. Если после загрузки через браузер macOS сообщает о повреждении файла или неизвестном разработчике, используйте Вариант A или снимите карантин:
 >
 > ```bash
 > xattr -cr "/Applications/Antigravity Pilot.app"
@@ -184,9 +192,9 @@ rm -rf "$HOME/.gemini/config/plugins/antigravity-pilot"
 npm --prefix src/McpAppWeb run typecheck && ./build.sh --build-web --dmg
 ```
 
-Параметры и переменные: `--notes-file <path>` задаёт примечания к релизу; поддерживается переопределение `APP_VERSION` (`0.1.0`), `MIN_MACOS` (`13.0`), `ARCHS` (`"arm64 x86_64"`), `GITHUB_REPO`.
+Параметры и переменные: `--notes-file <path>` задаёт примечания к релизу; поддерживается переопределение `APP_VERSION` (`0.1.1`), `MIN_MACOS` (`13.0`), `ARCHS` (`"arm64 x86_64"`), `GITHUB_REPO`.
 
-Выходные файлы: `build/Antigravity Pilot.app`, `build/Antigravity-Pilot-v0.1.0-macOS13-universal.dmg`, `build/latest.json`, `build/antigravity-pilot-mcp`, `build/libantigravity_proxy.dylib`, `build/AntigravityProxyLauncher`, `build/test_client`.
+Выходные файлы: `build/Antigravity Pilot.app`, `build/Antigravity-Pilot-v0.1.1-macOS13-universal.dmg`, `build/latest.json`, `build/antigravity-pilot-mcp`, `build/libantigravity_proxy.dylib`, `build/AntigravityProxyLauncher`, `build/test_client`.
 
 ### Автотесты и локальная проверка SOCKS5
 

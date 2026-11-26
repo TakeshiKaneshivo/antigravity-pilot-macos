@@ -102,9 +102,17 @@
 
 ### Step 1: 下載並安裝 Antigravity Pilot.app
 
-前往 [Releases](https://github.com/TakeshiKaneshivo/antigravity-pilot-macos/releases) 下載 `Antigravity-Pilot-v0.1.0-macOS13-universal.dmg`（或參考[本機建置與測試](#本機建置與測試)自行編譯），開啟映像檔後將 `Antigravity Pilot.app` 拖入 `Applications`。
+**方式 A：一行腳本安裝（推薦，自動校驗 SHA-256 並免瀏覽器隔離彈窗）**
 
-> **提示**：應用採用本機 ad-hoc 簽章，首次開啟若出現「**已損毀，無法打開**」或「**無法驗證開發者**」，執行以下指令清除隔離屬性即可：
+```bash
+curl -fsSL https://raw.githubusercontent.com/TakeshiKaneshivo/antigravity-pilot-macos/main/install.sh | bash
+```
+
+**方式 B：手動下載 DMG**
+
+前往 [Releases](https://github.com/TakeshiKaneshivo/antigravity-pilot-macos/releases) 下載 `Antigravity-Pilot-v0.1.1-macOS13-universal.dmg`（或參考[本機建置與測試](#本機建置與測試)自行編譯），開啟映像檔後將 `Antigravity Pilot.app` 拖入 `Applications`。
+
+> **提示**：應用採用本機 ad-hoc 簽章，若經瀏覽器下載並首次開啟時出現「**已損毀，無法打開**」或「**無法驗證開發者**」，改用方式 A 或執行以下指令清除隔離屬性即可：
 >
 > ```bash
 > xattr -cr "/Applications/Antigravity Pilot.app"
@@ -184,9 +192,9 @@ rm -rf "$HOME/.gemini/config/plugins/antigravity-pilot"
 npm --prefix src/McpAppWeb run typecheck && ./build.sh --build-web --dmg
 ```
 
-常用參數與環境變數：`--notes-file <path>` 可傳入發佈說明；支援 `APP_VERSION`（預設 `0.1.0`）、`MIN_MACOS`（預設 `13.0`）、`ARCHS`（預設 `"arm64 x86_64"`）、`GITHUB_REPO` 覆寫。
+常用參數與環境變數：`--notes-file <path>` 可傳入發佈說明；支援 `APP_VERSION`（預設 `0.1.1`）、`MIN_MACOS`（預設 `13.0`）、`ARCHS`（預設 `"arm64 x86_64"`）、`GITHUB_REPO` 覆寫。
 
-主要產物：`build/Antigravity Pilot.app`、`build/Antigravity-Pilot-v0.1.0-macOS13-universal.dmg`、`build/latest.json`、`build/antigravity-pilot-mcp`、`build/libantigravity_proxy.dylib`、`build/AntigravityProxyLauncher`、`build/test_client`。
+主要產物：`build/Antigravity Pilot.app`、`build/Antigravity-Pilot-v0.1.1-macOS13-universal.dmg`、`build/latest.json`、`build/antigravity-pilot-mcp`、`build/libantigravity_proxy.dylib`、`build/AntigravityProxyLauncher`、`build/test_client`。
 
 ### 自動化校驗與本機抓包測試
 

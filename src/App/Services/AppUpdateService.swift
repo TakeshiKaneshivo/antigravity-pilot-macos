@@ -408,8 +408,11 @@ enum AppUpdateService {
 
         PARENT_DIR="$(/usr/bin/dirname "$TARGET_APP")"
         BACKUP_APP="$PARENT_DIR/.Antigravity-Pilot.app.backup-$$"
+        OLD_ICON_SHA=""
+        NEW_ICON_SHA="$(/usr/bin/shasum -a 256 "$STAGED_APP/Contents/Resources/antigravity-pilot.icns" 2>/dev/null | /usr/bin/awk '{print $1}' || true)"
 
         if [[ -e "$TARGET_APP" ]]; then
+          OLD_ICON_SHA="$(/usr/bin/shasum -a 256 "$TARGET_APP/Contents/Resources/antigravity-pilot.icns" 2>/dev/null | /usr/bin/awk '{print $1}' || true)"
           if ! /bin/mv "$TARGET_APP" "$BACKUP_APP"; then
             echo "Failed to move target app to backup"
             /usr/bin/open "$TARGET_APP" || true
@@ -431,6 +434,9 @@ enum AppUpdateService {
         LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
         if [[ -x "$LSREGISTER" ]]; then
           "$LSREGISTER" -f "$TARGET_APP" 2>/dev/null || true
+          if [[ -n "$OLD_ICON_SHA" && -n "$NEW_ICON_SHA" && "$OLD_ICON_SHA" != "$NEW_ICON_SHA" ]]; then
+            "$LSREGISTER" -f -R "$TARGET_APP" 2>/dev/null || true
+          fi
         fi
 
         if [[ -e "$BACKUP_APP" ]]; then
@@ -467,6 +473,64 @@ enum AppUpdateService {
         guard launchProcess.terminationStatus == 0 else {
             throw UpdateError.installFailed(L10n.t("无法启动更新替换进程。", "Failed to launch update helper.", lang))
         }
+    }
+
+    static func refreshBundleIconCacheIfChanged(
+        bundleURL: URL = Bundle.main.bundleURL,
+        support: AppSupport = AppSupport(),
+        defaults: UserDefaults = .standard
+    ) -> Bool {
+        let standardized = bundleURL.standardizedFileURL
+        guard standardized.pathExtension.lowercased() == "app" else { return false }
+
+        let icnsURL = standardized.appendingPathComponent("Contents/Resources/antigravity-pilot.icns")
+        guard let currentHash = sha256File(icnsURL) else { return false }
+
+        let key = "pilot.lastBundledIconSHA256"
+        let previousHash = defaults.string(forKey: key)
+        if previousHash == currentHash {
+            return false
+        }
+        defaults.set(currentHash, forKey: key)
+
+        let isExistingUserUpgrade = (previousHash != nil) || FileManager.default.fileExists(atPath: support.configURL.path)
+        guard isExistingUserUpgrade else { return false }
+
+        _ = try? runProcess(
+            "/usr/bin/touch",
+            [standardized.path, standardized.appendingPathComponent("Contents/Info.plist").path],
+            allowFailure: true
+        )
+
+        let lsregister = "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+        if FileManager.default.isExecutableFile(atPath: lsregister) {
+            _ = try? runProcess(lsregister, ["-f", standardized.path], allowFailure: true)
+        }
+
+        if isAppPinnedInDock(bundleURL: standardized) {
+            _ = try? runProcess("/usr/bin/killall", ["Dock"], allowFailure: true)
+        }
+        return true
+    }
+
+    private static func isAppPinnedInDock(bundleURL: URL) -> Bool {
+        guard let persistentApps = UserDefaults(suiteName: "com.apple.dock")?.array(forKey: "persistent-apps") as? [[String: Any]] else {
+            return false
+        }
+        let plainName = bundleURL.lastPathComponent
+        let encodedName = plainName.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? plainName
+        for item in persistentApps {
+            guard let tileData = item["tile-data"] as? [String: Any] else { continue }
+            if let bundleID = tileData["bundle-identifier"] as? String, bundleID == expectedBundleIdentifier {
+                return true
+            }
+            if let fileData = tileData["file-data"] as? [String: Any],
+               let urlString = fileData["_CFURLString"] as? String,
+               urlString.contains(plainName) || urlString.contains(encodedName) {
+                return true
+            }
+        }
+        return false
     }
 
     static func cleanupStaleUpdateFiles(in updatesDir: URL) {

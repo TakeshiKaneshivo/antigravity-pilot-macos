@@ -3,8 +3,10 @@ import SwiftUI
 struct MenuBarPopoverView: View {
     @ObservedObject var appModel: AppModel
     @ObservedObject var monitorStore: MonitorStore
+    @ObservedObject var updateStore: UpdateStore
     @ObservedObject var antigravityUpdateStore: AntigravityUpdateStore
     var onOpenMainWindow: () -> Void
+    var onOpenUpdatePopover: () -> Void
     var onClosePopover: () -> Void
     var onQuit: () -> Void
 
@@ -92,6 +94,35 @@ struct MenuBarPopoverView: View {
                 .foregroundStyle(.secondary)
             }
             Spacer()
+            if let updateVer = updateStore.availableVersionBadgeText(skippedVersion: appModel.config.skippedUpdateVersion) {
+                Button {
+                    onClosePopover()
+                    onOpenUpdatePopover()
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.up.circle.fill")
+                            .font(.caption2)
+                        Text("v\(updateVer)")
+                            .font(.caption2.weight(.semibold))
+                            .fontDesign(.rounded)
+                            .monospacedDigit()
+                            .lineLimit(1)
+                    }
+                    .foregroundStyle(.blue)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(Capsule().fill(Color.blue.opacity(0.14)))
+                    .overlay(Capsule().strokeBorder(Color.blue.opacity(0.28), lineWidth: 0.75))
+                }
+                .buttonStyle(.plain)
+                .help(L10n.t(
+                    zhHans: "发现 Pilot 新版本 v\(updateVer)，点击查看更新",
+                    zhHant: "發現 Pilot 新版本 v\(updateVer)，點擊查看更新",
+                    en: "Pilot v\(updateVer) available — click to update",
+                    ru: "Доступна версия Pilot v\(updateVer) — нажмите для обновления",
+                    lang
+                ))
+            }
             Button {
                 appModel.checkProxyHealth()
                 monitorStore.refreshAll(forceHistory: true)
@@ -199,33 +230,62 @@ struct MenuBarPopoverView: View {
     }
 
     private var quotaBox: some View {
-        PilotRecessedBox(padding: 10) {
-            VStack(alignment: .leading, spacing: 6) {
+        let pools = monitorStore.quotaPools
+        return PilotRecessedBox(padding: 10) {
+            VStack(alignment: .leading, spacing: 7) {
                 HStack {
-                    Text(L10n.t("主配额池余量", "Primary Quota Pool", lang))
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
+                    Text(L10n.t(
+                        zhHans: pools.count > 1 ? "模型共享配额池 (\(pools.count))" : "模型共享配额池",
+                        zhHant: pools.count > 1 ? "模型共享配額池 (\(pools.count))" : "模型共享配額池",
+                        en: pools.count > 1 ? "Model Quota Pools (\(pools.count))" : "Model Quota Pools",
+                        ru: pools.count > 1 ? "Пулы квот моделей (\(pools.count))" : "Пулы квот моделей",
+                        lang
+                    ))
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
                     Spacer()
-                    if let quota = monitorStore.primaryQuotaPool {
-                        Text(quota.resetCountdownText(lang))
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
                 }
 
-                if let quota = monitorStore.primaryQuotaPool {
-                    let tint: Color = quota.remainingPercent <= 15 ? .red : (quota.remainingPercent <= 35 ? .orange : .green)
-                    HStack(spacing: 8) {
-                        PilotLinearBar(fraction: quota.remainingFraction, tint: tint, height: 6)
-                        Text("\(quota.remainingPercent)%")
-                            .font(.system(.caption, design: .rounded).weight(.bold))
-                            .monospacedDigit()
-                            .foregroundStyle(tint)
-                    }
-                } else {
+                if pools.isEmpty {
                     Text(L10n.t("未连接到模型配额服务", "Not connected to quota service", lang))
                         .font(.caption)
                         .foregroundStyle(.tertiary)
+                } else if pools.count > 3 {
+                    ScrollView {
+                        quotaPoolRows(pools)
+                    }
+                    .frame(maxHeight: 165)
+                } else {
+                    quotaPoolRows(pools)
+                }
+            }
+        }
+    }
+
+    private func quotaPoolRows(_ pools: [QuotaPoolGroup]) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            ForEach(pools) { pool in
+                let tint: Color = pool.remainingPercent <= 15 ? .red : (pool.remainingPercent <= 35 ? .orange : .green)
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 6) {
+                        Text(pool.title)
+                            .font(.caption2.weight(.medium))
+                            .foregroundStyle(.primary)
+                            .lineLimit(1)
+                        Spacer(minLength: 4)
+                        Text(pool.resetCountdownText(lang))
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    HStack(spacing: 8) {
+                        PilotLinearBar(fraction: pool.remainingFraction, tint: tint, height: 5)
+                        Text("\(pool.remainingPercent)%")
+                            .font(.system(.caption, design: .rounded).weight(.bold))
+                            .monospacedDigit()
+                            .foregroundStyle(tint)
+                            .frame(width: 34, alignment: .trailing)
+                    }
                 }
             }
         }

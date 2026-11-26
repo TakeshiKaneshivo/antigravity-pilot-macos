@@ -106,7 +106,7 @@ final class AntigravityUpdateStore: ObservableObject {
         checkTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let (manifest, route) = try await AntigravityUpdateService.fetchManifest(
+                let (result, route) = try await AntigravityUpdateService.fetchManifest(
                     sourceApp: currentSupport.sourceApp,
                     installedVersion: installedVersion,
                     config: config
@@ -117,22 +117,28 @@ final class AntigravityUpdateStore: ObservableObject {
                 self.lastCheckedAt = now
                 UserDefaults.standard.set(now.timeIntervalSince1970, forKey: self.lastCheckDefaultsKey)
 
-                if let remoteVer = AppVersion(manifest.version),
-                   let localVer = AppVersion(installedVersion),
-                   remoteVer > localVer {
-                    let eligibility = AntigravityUpdateService.checkInstallEligibility(
-                        sourceApp: currentSupport.sourceApp,
-                        lang: lang
-                    )
-                    let nextState = AntigravityUpdateState.available(
-                        installedVersion: installedVersion,
-                        manifest: manifest,
-                        route: route,
-                        eligibility: eligibility
-                    )
-                    self.cachedAvailableState = nextState
-                    self.state = nextState
-                } else {
+                switch result {
+                case .updateAvailable(let manifest):
+                    if let remoteVer = AppVersion(manifest.version),
+                       let localVer = AppVersion(installedVersion),
+                       remoteVer > localVer {
+                        let eligibility = AntigravityUpdateService.checkInstallEligibility(
+                            sourceApp: currentSupport.sourceApp,
+                            lang: lang
+                        )
+                        let nextState = AntigravityUpdateState.available(
+                            installedVersion: installedVersion,
+                            manifest: manifest,
+                            route: route,
+                            eligibility: eligibility
+                        )
+                        self.cachedAvailableState = nextState
+                        self.state = nextState
+                    } else {
+                        self.cachedAvailableState = nil
+                        self.state = .upToDate(installedVersion: installedVersion, checkedAt: now, route: route)
+                    }
+                case .upToDate:
                     self.cachedAvailableState = nil
                     self.state = .upToDate(installedVersion: installedVersion, checkedAt: now, route: route)
                 }

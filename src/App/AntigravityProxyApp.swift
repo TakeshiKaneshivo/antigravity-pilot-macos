@@ -50,6 +50,15 @@ final class BuilderAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
     func applicationDidFinishLaunching(_ notification: Notification) {
         appModel.load()
         monitorStore.start()
+        let appSupport = appModel.support
+        let bundleURL = Bundle.main.bundleURL
+        Task.detached(priority: .utility) {
+            if AppUpdateService.refreshBundleIconCacheIfChanged(bundleURL: bundleURL, support: appSupport) {
+                await MainActor.run {
+                    NSWorkspace.shared.noteFileSystemChanged(bundleURL.path)
+                }
+            }
+        }
         updateStore.startAutoCheckSchedule { [weak self] in
             self?.appModel.config ?? .defaultConfig
         }
@@ -194,17 +203,20 @@ final class StatusBarController: NSObject, NSPopoverDelegate, NSMenuDelegate {
         popover.behavior = .transient
         popover.animates = true
         popover.delegate = self
-        popover.contentSize = NSSize(width: 344, height: 430)
-        popover.contentViewController = NSHostingController(
+        let hostingController = NSHostingController(
             rootView: MenuBarPopoverView(
                 appModel: appModel,
                 monitorStore: monitorStore,
+                updateStore: updateStore,
                 antigravityUpdateStore: antigravityUpdateStore,
                 onOpenMainWindow: onOpenMainWindow,
+                onOpenUpdatePopover: onOpenUpdatePopover,
                 onClosePopover: { [weak self] in self?.closePopover() },
                 onQuit: onQuit
             )
         )
+        hostingController.sizingOptions = [.preferredContentSize]
+        popover.contentViewController = hostingController
     }
 
     func updateVisibilityAndTitle() {
@@ -488,6 +500,12 @@ enum SmokeTestRunner {
                 } else {
                     check(false, "mcp_config.json schema valid with mcpServers.pilot.command")
                 }
+                let logoURL = tempSupport.mcpPluginDirectory.appendingPathComponent("assets/logo.png")
+                try Data("stale-logo".utf8).write(to: logoURL)
+                check(
+                    installer.status(bundledVersion: "0.1.0") == .updateAvailable(installedVersion: "0.1.0", bundledVersion: "0.1.0"),
+                    "McpPluginInstaller detects changed logo.png as updateAvailable"
+                )
                 try installer.uninstall()
                 check(installer.status(bundledVersion: "0.1.0") == .notInstalled, "McpPluginInstaller status returns to notInstalled after uninstall")
             } catch {
@@ -892,6 +910,36 @@ enum SmokeTestRunner {
         )
         let resolvedCustomFeed = AntigravityUpdateService.readFeedBaseURL(from: tempFeedApp)
         let fallbackFeed = AntigravityUpdateService.readFeedBaseURL(from: tempUpdatesRoot.appendingPathComponent("Missing.app"))
+
+        let minimalUpToDateYAML = "version: 2.35.2\n"
+        let checkUpToDate = try? AntigravityUpdateService.parseFeedCheckYAML(
+            minimalUpToDateYAML,
+            installedVersion: "2.35.2",
+            baseURL: feedBase,
+            isArm64: true
+        )
+        var rejectedMinimalUpgrade = false
+        do {
+            _ = try AntigravityUpdateService.parseFeedCheckYAML(
+                minimalUpToDateYAML,
+                installedVersion: "2.35.1",
+                baseURL: feedBase,
+                isArm64: true
+            )
+        } catch {
+            rejectedMinimalUpgrade = true
+        }
+        let checkFullUpgrade = try? AntigravityUpdateService.parseFeedCheckYAML(
+            armYAML,
+            installedVersion: "2.35.2",
+            baseURL: feedBase,
+            isArm64: true
+        )
+        var fullUpgradeOK = false
+        if case .updateAvailable(let m) = checkFullUpgrade, m.version == "2.36.0" {
+            fullUpgradeOK = true
+        }
+
         check(
             parsedArm?.version == "2.36.0"
                 && parsedArm?.size == 216133032
@@ -899,8 +947,11 @@ enum SmokeTestRunner {
                 && rejectedBadSHA
                 && rejectedHTTPYAML
                 && resolvedCustomFeed.absoluteString == "https://custom.example.com/manifest/"
-                && fallbackFeed == AntigravityUpdateService.defaultFeedBaseURL,
-            "AntigravityUpdateService parses YAML, validates SHA-512/HTTPS, and resolves app-update.yml feed"
+                && fallbackFeed == AntigravityUpdateService.defaultFeedBaseURL
+                && checkUpToDate == .upToDate(remoteVersion: "2.35.2")
+                && rejectedMinimalUpgrade
+                && fullUpgradeOK,
+            "AntigravityUpdateService parses YAML, handles minimal up-to-date feed, validates SHA-512/HTTPS, and resolves app-update.yml"
         )
 
         // 18. AntigravityUpdateService loopback E2E manifest fetch, streaming SHA-512 zip download, cache hit & tamper rejection
@@ -912,7 +963,7 @@ enum SmokeTestRunner {
             let agSem = DispatchSemaphore(value: 0)
             Task {
                 do {
-                    let (manifest, route) = try await AntigravityUpdateService.fetchManifest(
+                    let (feedResult, route) = try await AntigravityUpdateService.fetchManifest(
                         sourceApp: tempFeedApp,
                         installedVersion: "2.35.2",
                         config: ProxyConfig.defaultConfig,
@@ -920,6 +971,11 @@ enum SmokeTestRunner {
                         allowInsecureHTTPOverride: true,
                         isArm64: true
                     )
+                    guard case .updateAvailable(let manifest) = feedResult else {
+                        check(false, "AntigravityUpdateService expected updateAvailable over loopback HTTP")
+                        agSem.signal()
+                        return
+                    }
                     check(manifest.version == "2.36.0" && route == .direct, "AntigravityUpdateService fetches & parses YAML over loopback HTTP")
 
                     let (zip1, _) = try await AntigravityUpdateService.downloadAndVerifyZip(
@@ -1060,6 +1116,30 @@ enum SmokeTestRunner {
             encoding: .utf8
         )
         let blockedByYML = !RuntimeBuilder.canFastHotUpdate(config: ProxyConfig.defaultConfig, support: isolatedSupport)
+        let evalYML = RuntimeBuilder.evaluateHotUpdate(config: ProxyConfig.defaultConfig, support: isolatedSupport)
+        let missingEval = RuntimeBuilder.evaluateHotUpdate(
+            config: ProxyConfig.defaultConfig,
+            support: AppSupport(
+                sourceApp: tempUpdatesRoot.appendingPathComponent("MissingSource.app"),
+                rootOverride: isolatedRoot
+            )
+        )
+        let unbuiltEval = RuntimeBuilder.evaluateHotUpdate(
+            config: ProxyConfig.defaultConfig,
+            support: AppSupport(
+                sourceApp: targetMockApp,
+                rootOverride: tempUpdatesRoot.appendingPathComponent("empty-support", isDirectory: true)
+            )
+        )
+        let allResults: [HotUpdateCheckResult] = [
+            .hotUpdateReady, .missingSourceApp, .runtimeNotBuilt, .runtimeIncomplete,
+            .proxyBinaryUpdated, .legacyUpdaterPresent, .sourceVersionChanged, .iconStyleChanged, .pilotIconUpdated, .signatureInvalid
+        ]
+        let allStringsValid = allResults.allSatisfy { item in
+            AppLanguage.allCases.filter { $0 != .system }.allSatisfy { lang in
+                !item.pillTitle(lang).isEmpty && !item.detailReason(lang).isEmpty
+            }
+        }
         var googleSigOK = true
         if FileManager.default.fileExists(atPath: sourceApp.path) {
             let verifyProc = Process()
@@ -1077,7 +1157,29 @@ enum SmokeTestRunner {
             verifyProc.waitUntilExit()
             googleSigOK = (verifyProc.terminationStatus == 0)
         }
-        check(blockedByYML && googleSigOK, "canFastHotUpdate flags app-update.yml & real Antigravity passes Google codesign -R")
+        check(blockedByYML && evalYML == .legacyUpdaterPresent && googleSigOK, "canFastHotUpdate & evaluateHotUpdate flag app-update.yml & real Antigravity passes Google codesign -R")
+        check(
+            missingEval == .missingSourceApp && unbuiltEval == .runtimeNotBuilt && allStringsValid,
+            "HotUpdateCheckResult distinguishes missingSourceApp/runtimeNotBuilt and provides 4-language descriptions"
+        )
+
+        if let resPath = Bundle.main.resourcePath,
+           FileManager.default.fileExists(atPath: URL(fileURLWithPath: resPath).appendingPathComponent("antigravity-pilot.icns").path) {
+            try? FileManager.default.removeItem(at: mockRuntimeRes.appendingPathComponent("app-update.yml"))
+            let mockRuntimePlist: [String: Any] = [
+                "CFBundleIdentifier": "com.google.antigravity.pilot.runtime",
+                "CFBundleIconFile": "antigravity-pilot.icns"
+            ]
+            if let plistData = try? PropertyListSerialization.data(fromPropertyList: mockRuntimePlist, format: .xml, options: 0) {
+                try? plistData.write(to: mockRuntime.appendingPathComponent("Contents/Info.plist"))
+            }
+            try? Data("stale-icns-bytes".utf8).write(to: mockRuntimeRes.appendingPathComponent("antigravity-pilot.icns"))
+            let iconUpdatedEval = RuntimeBuilder.evaluateHotUpdate(config: ProxyConfig.defaultConfig, support: isolatedSupport)
+            check(
+                iconUpdatedEval == .pilotIconUpdated,
+                "RuntimeBuilder.evaluateHotUpdate detects changed antigravity-pilot.icns as pilotIconUpdated"
+            )
+        }
 
         exit(tracker.hasFailed ? 1 : 0)
     }

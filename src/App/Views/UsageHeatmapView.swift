@@ -372,15 +372,18 @@ struct UsageHeatmapView: View {
         }
         .chartXAxis {
             AxisMarks(values: xLabels) { val in
-                AxisValueLabel {
+                AxisValueLabel(centered: true) {
                     if let s = val.as(String.self) {
                         Text(s)
                             .font(.system(size: 9.5))
                             .monospacedDigit()
+                            .lineLimit(1)
+                            .fixedSize()
                     }
                 }
             }
         }
+        .padding(.horizontal, 6)
 
         if #available(macOS 14, *) {
             chart.chartXSelection(value: Binding(

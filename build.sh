@@ -19,7 +19,7 @@ Options:
   -h, --help           Show this help.
 
 Environment overrides:
-  APP_VERSION  Bundle short version & DMG version (default: 0.1.0)
+  APP_VERSION  Bundle short version & DMG version (default: 0.1.1)
   MIN_MACOS    Minimum supported macOS version (default: 13.0)
   ARCHS        Space-separated architectures (default: "arm64 x86_64")
   SDKROOT      macOS SDK path (default: xcrun --show-sdk-path)
@@ -61,7 +61,7 @@ mkdir -p "$BUILD_DIR"
 
 CC="${CC:-clang}"
 SWIFTC="${SWIFTC:-swiftc}"
-APP_VERSION="${APP_VERSION:-0.1.0}"
+APP_VERSION="${APP_VERSION:-0.1.1}"
 MIN_MACOS="${MIN_MACOS:-13.0}"
 ARCHS="${ARCHS:-arm64 x86_64}"
 SDKROOT="${SDKROOT:-$(xcrun --show-sdk-path)}"

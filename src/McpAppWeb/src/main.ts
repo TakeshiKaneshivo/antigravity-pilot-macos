@@ -492,7 +492,12 @@ function renderProxyCard(live: LiveSnapshotDTO | null): string {
           <span class="chain-arrow">›</span>
           ${chainNode('2. SOCKS5', '05 01 00', h.socks5HandshakeOK)}
           <span class="chain-arrow">›</span>
-          ${chainNode(tr('3. 外网', '3. Net'), h.latencyMs != null ? `${h.latencyMs} ms` : '204', h.internetReachable)}
+          ${(() => {
+            const netDetail = h.internetReachable == null
+              ? tr('未探测', 'Not probed')
+              : (h.internetReachable && h.latencyMs != null ? `${h.latencyMs} ms` : '204');
+            return chainNode(tr('3. 外网', '3. Net'), netDetail, h.internetReachable);
+          })()}
           <span class="chain-arrow">›</span>
           ${chainNode('ENV', `${cfg.envScheme}:${cfg.envPort}`, h.envPortReachable)}
         </div>
