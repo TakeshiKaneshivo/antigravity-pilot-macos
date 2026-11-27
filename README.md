@@ -69,10 +69,10 @@
 
 - **免 TUN 代理与 0.1 秒热更新**：通过隔离代理副本让 Antigravity 走本机 SOCKS5/HTTP 代理（内置 7 组常用预设、支持 IPv4/IPv6 与 `NO_PROXY` 局域网绕过），改端口免重建秒开。
 - **三阶健康检测与冲突防护**：实时验证「TCP 端口 → SOCKS5 握手 → 外网 `generate_204`」链路与 ENV 端口，先校验代理再提示并一键优雅退出运行中实例。
-- **纯原生实时监控**：查看当前对话上下文占用、缓存命中率、TTFT、生成速度与共享配额池倒计时（含 `0%` 已耗尽配额池），默认自动跟随最新会话并支持手动固定。
-- **Token 用量热力图与费用估算**：展示 20 周活跃热力图、近 14 日趋势、模型占比与估算 API 账单（支持 `custom_pricing.json` 自定义计费）。
-- **菜单栏伴侣与官方应用内插件**：主窗口可缩入菜单栏常驻并支持开机自启；一键在 Antigravity 边栏与对话 `+` 菜单嵌入「用量与账单 / 实时监控」看板（0 Token 刷新、自动亮暗主题）。
-- **应用内自更新与多语言图标切换**：支持从 GitHub Releases 自动检查更新并校验 SHA-256 后原地升级；支持 Pilot / 原版图标切换与简/繁中文、English、Русский 四语界面。
+- **纯原生实时监控**：追踪上下文构成与步骤层级、TTFT、生成速度及 `5h` / `7d` 双窗口共享配额池，支持自动跟随或固定会话。
+- **用量热力图与费用估算**：20 周热力图、14 日趋势与 Desktop + CLI 归因，内置自动同步定价表与 4 套莫兰迪图表配色（同步至应用内看板）。
+- **菜单栏伴侣与官方应用内插件**：常驻菜单栏（可自定义运行弧、上下文与 `5h`/`7d` 配额），原版更新原生系统通知；一键嵌入 0 Token 刷新的应用内看板。
+- **应用内自更新与多语言**：支持直连/代理更新校验 SHA-256，提供 3 种代理副本图标样式（角标 / 原版 / Pilot）与四语界面。
 
 ---
 
@@ -128,7 +128,7 @@ curl -fsSL https://raw.githubusercontent.com/TakeshiKaneshivo/antigravity-pilot-
 ### Step 3: Dock 单图标秒开与菜单栏常驻
 
 1. 代理版 Antigravity 启动后，右键 Dock 上正在运行的图标 → **「选项 → 在程序坞中保留」**（可将原版图标移出 Dock 以免误点）。
-2. 关闭 `Antigravity Pilot` 主窗口后自动缩入右上角菜单栏（Dock 仅保留正在运行的 Antigravity 一个图标），显示紧凑指标（如 `188K · 89%`），点击可展开快捷监控浮窗。
+2. 关闭 `Antigravity Pilot` 主窗口后缩入菜单栏（Dock 仅保留 Antigravity 单图标），显示 `② 148K · 5h 39%` 等紧凑指标（可在「高级设置」按需开关），点击展开快捷浮窗。
 3. 配置文件保存在 `~/Library/Application Support/Antigravity Pilot/config.json`。
 
 ---
@@ -137,13 +137,13 @@ curl -fsSL https://raw.githubusercontent.com/TakeshiKaneshivo/antigravity-pilot-
 
 ### 图标切换与自定义图标
 
-- **切换内置样式**：在主窗口「应用图标样式」可随时在 **Pilot 标识** 与 **原版图标** 间切换（仅作用于代理副本，`/Applications/Antigravity Pilot.app` 伴侣始终保持 `PILOT` 图标以便区分）。
-- **自定义 PNG 图标**：替换仓库根目录 `icon.png`（建议 `1024×1024` 透明底、居中 `824×824`、留白 `100 px`），再运行 `./build.sh` 即可。
+- **切换内置样式**：在主窗口「应用图标样式」可随时在 **角标（推荐）**、**原版** 与 **Pilot** 间切换（仅作用于代理副本，`/Applications/Antigravity Pilot.app` 伴侣始终保持 `PILOT` 图标以便区分）。
+- **自定义 PNG 图标**：替换仓库根目录 `icon.png`（建议 `1024×1024` 透明底、居中 `824×824`、留白 `100 px`）或 `menubar-icon.png`（自定义单色菜单栏图标），再运行 `./build.sh` 即可。
 
 ### 更新 Pilot 与原版 Antigravity
 
 - **更新 Antigravity Pilot 本体**：点击左侧边栏底部版本号可打开软件更新浮窗，支持自动检测 GitHub Releases、直连/代理双路由下载 DMG 并校验 SHA-256 后原地替换重启。
-- **更新原版 `/Applications/Antigravity.app`**：隔离代理副本已停用会因 Bundle ID 与签名差异反复失败的内置 Squirrel 更新器；改为由 `Antigravity Pilot` 走本地代理检测官方更新源，点击 **一键更新原版并重建** 即可自动完成 SHA-512 与 Google 官方签名校验、优雅退出、原子替换原版并重建重启副本（若手动更新了原版，Pilot 也会自动提示重建）。
+- **更新原版 `/Applications/Antigravity.app`**：副本已停用会因签名差异报错的内置 Squirrel 更新器，改为由 Pilot 走本地代理检查官方源。点击 **一键更新原版并重建** 即可完成 SHA-512 与 Google 签名校验并原子替换重建；当原版更新（含手动更新）时，Pilot 还会发送原生 macOS 通知提醒重建。
 
 ### 停止后台进程
 
@@ -171,9 +171,9 @@ rm -rf "$HOME/.gemini/config/plugins/antigravity-pilot"
 
 1. **零侵入隔离副本**：原版 `/Applications/Antigravity.app` 开启了 Hardened Runtime 会屏蔽外部动态库注入，因此 Pilot 保持原版只读不动，仅在用户目录创建单层隔离 Runtime 副本并合并 Entitlements 后本地重签名。
 2. **三通道免 TUN 代理**：由 `libantigravity_proxy.dylib`（`__DATA,__interpose` + `198.18.0.0/15` FakeIP 转 SOCKS5）、Go/Node 环境变量及主 Chromium `--proxy-server` 参数协同接管全部进程流量，并按 `NO_PROXY` 规则直连局域网 CIDR。
-3. **0.1 秒热更新与单图标**：`AntigravityProxyLauncher` 优先读取外置 `proxy.env` 后原地 `execv()` 拉起主程序；改端口或 `NO_PROXY` 仅重写外置文件，无需重复制和重签名。
+3. **0.1 秒热更新与单图标**：`AntigravityProxyLauncher` 读取外置 `proxy.env` 后原地 `execv()` 拉起主程序；改端口只重写配置免重签名，并记录源二进制 SHA-256 防止局部重签后误判重建。
 4. **原生实时监控**：自动发现本地 `~/.gemini/antigravity/daemon/hub_*.json`，通过禁用代理的回环 Connect-RPC 读取上下文占用、性能指标与模型共享配额池。
-5. **增量用量与账单**：按 `size + mtime` 增量扫描 `transcript.jsonl` 并缓存至 `usage_cache.json`，结合内置/自定义定价表估算每日及分模型 API 费用。
+5. **增量用量与账单**：按 `size + mtime` 增量扫描 Desktop + CLI 会话日志并缓存至 `usage_cache.json`，结合自动同步的 `pricing-catalog.json`（支持 `custom_pricing.json` 覆写）估算 API 费用。
 6. **官方应用内看板与图标同步**：通过官方 MCP Apps（SEP-1865）提供零 JS 注入、0 Token 刷新的应用内看板；切换 Pilot 图标时同步按 Chromium Pickle 4 字节对齐更新 `app.asar` 与 `ElectronAsarIntegrity`。
 
 ---
@@ -185,14 +185,18 @@ rm -rf "$HOME/.gemini/config/plugins/antigravity-pilot"
 需要 Xcode Command Line Tools（`xcode-select --install`）：
 
 ```bash
-# 编译 macOS 13.0+ Universal (arm64 + x86_64) 应用与原生二进制
+# 编译 macOS 13.0+ Universal (arm64 + x86_64) 应用与原生二进制（自动启用 build/.cache 增量缓存）
 ./build.sh
+
+# 日常开发仅编译本机架构（跳过双架构汇编，速度更快）
+./build.sh --native
 
 # 运行 Web 类型检查、重编前端看板并打包 .dmg 与 latest.json（输出 SHA256）
 npm --prefix src/McpAppWeb run typecheck && ./build.sh --build-web --dmg
 ```
 
-常用参数与环境变量：`--notes-file <path>` 可传入发布说明；支持 `APP_VERSION`（默认 `0.2.0`）、`MIN_MACOS`（默认 `13.0`）、`ARCHS`（默认 `"arm64 x86_64"`）、`GITHUB_REPO` 覆盖。
+- **构建参数**：`--native` 仅编本机架构；`--clean` 清理 `build/.cache` 冷重建；`--notes-file <path>` 传入发布说明。
+- **环境变量**：支持覆写 `APP_VERSION`（`0.2.0`）、`MIN_MACOS`（`13.0`）、`ARCHS`（`"arm64 x86_64"`）与 `GITHUB_REPO`。
 
 主要产物：`build/Antigravity Pilot.app`、`build/Antigravity-Pilot-v0.2.0-macOS13-universal.dmg`、`build/latest.json`、`build/antigravity-pilot-mcp`、`build/libantigravity_proxy.dylib`、`build/AntigravityProxyLauncher`、`build/test_client`。
 

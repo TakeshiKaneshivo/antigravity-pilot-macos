@@ -1,0 +1,6 @@
+{
+  "zh-Hans": "- 代理感知原版更新：一键校验并更新原版，支持原生系统通知\n- 实时监控升级：5h/7d 双窗口配额、上下文拆解与子会话层级\n- 用量与配色：Desktop + CLI 归因、4 套莫兰迪配色与自动同步定价\n- 菜单栏与图标：旋转弧内嵌并发数、层次化排版与 3 种副本图标\n- 稳定性修复：解决重签名误判重建，加固更新并发与多语言细节",
+  "zh-Hant": "- 代理感知原版更新：一鍵校驗並更新原版，支援原生系統通知\n- 即時監控升級：5h/7d 雙視窗配額、上下文拆解與子工作階段層級\n- 用量與配色：Desktop + CLI 歸因、4 套莫蘭迪配色與自動同步定價\n- 選單列與圖示：旋轉弧內嵌並行數、層次化排版與 3 種副本圖示\n- 穩定性修復：解決重簽署誤判重建，加固更新並行與多語言細節",
+  "en": "- Proxy-aware app updater: verify & update original Antigravity with native notifications\n- Live Monitor: 5h/7d dual-window quotas, context breakdown & nested sessions\n- Usage & palettes: Desktop + CLI attribution, 4 Morandi chart presets & auto-synced pricing\n- Menu bar & icons: arc spinner count badge, hierarchical typography & 3 copy icon styles\n- Reliability: fix false rebuilds after codesign and harden concurrency & i18n",
+  "ru": "- Прокси-обновление оригинала: проверка, обновление и нативные уведомления macOS\n- Монитор: квоты 5h/7d, состав контекста и вложенные сессии\n- Учёт и палитры: Desktop + CLI, 4 палитры Моранди и автосинхронизация тарифов\n- Меню и иконки: счётчик в дуге, иерархическая типографика и 3 стиля иконки\n- Надёжность: исправлена ложная пересборка после codesign, усилены конкурентность и i18n"
+}

@@ -69,10 +69,10 @@ A **zero-intrusion**, 100% native macOS companion for Antigravity. Route Antigra
 
 - **No-TUN Local Proxy & 0.1s Hot-Update**: Routes Antigravity through your local SOCKS5/HTTP proxy via an isolated copy (7 presets, IPv4/IPv6, `NO_PROXY` LAN bypass), with instant port edits without rebuilding.
 - **3-Stage Health Check & Conflict Guard**: Live probe for TCP reachability, SOCKS5 handshake, and `generate_204` latency; validates the proxy before prompting and gracefully quitting running instances.
-- **100% Native Live Monitor**: Tracks active context usage, cache hit rate, TTFT, generation speed, and shared quota pools (including exhausted `0%` pools), with Auto-Latest tracking or manual session pinning.
-- **Token Heatmap & Cost Estimates**: Renders a 20-week activity heatmap, 14-day trend, model breakdown, and estimated API billing (customizable via `custom_pricing.json`).
-- **Menu Bar Companion & In-App MCP Plugin**: Minimizes to the menu bar with launch-at-login support, and embeds **Usage & Billing / Live Monitor** inside Antigravity (0-token refresh, auto theme sync).
-- **In-App Auto-Update & Icon/Language Support**: Checks GitHub Releases `latest.json`, verifies SHA-256 over direct/proxy routes, and updates in place; supports Pilot vs Original icon switching and 4-language UI (`简体中文` / `繁體中文` / `English` / `Русский`).
+- **100% Native Live Monitor**: Tracks context breakdown & step hierarchy, TTFT, generation speed, and dual-window (`5h` / `7d`) quota pools with Auto-Latest or pinned sessions.
+- **Usage Heatmap & Cost Estimates**: 20-week heatmap, 14-day trend, and Desktop + CLI attribution with auto-synced pricing and 4 Morandi chart presets (synced to the in-app dashboard).
+- **Menu Bar Companion & In-App Plugin**: Minimizes to the menu bar (customizable spinner, context, and `5h`/`7d` quota), sends native update alerts, and embeds a 0-token in-app dashboard.
+- **In-App Auto-Update & 4 Languages**: Direct/proxy SHA-256 self-updates, 3 copy icon styles (Badged / Original / Pilot), and 4-language UI (`简体中文` / `繁體中文` / `English` / `Русский`).
 
 ---
 
@@ -128,7 +128,7 @@ Open `/Applications/Antigravity Pilot.app` to access five native tabs: **Proxy O
 ### Step 3: Single-Icon Dock Launch & Menu Bar Companion
 
 1. Once the proxied Antigravity opens, right-click its running Dock icon → **Options → Keep in Dock** (unpin the original icon to avoid launching it by mistake).
-2. Closing the `Antigravity Pilot` window minimizes it into the menu bar (`.accessory` mode, keeping only the running Antigravity icon in Dock), displaying compact metrics (e.g. `188K · 89%`) with a quick popover.
+2. Closing `Antigravity Pilot` minimizes it to the menu bar (keeping only Antigravity in the Dock), showing compact metrics like `② 148K · 5h 39%` (customizable in **Settings**) with a quick popover.
 3. Configuration is saved at `~/Library/Application Support/Antigravity Pilot/config.json`.
 
 ---
@@ -137,13 +137,13 @@ Open `/Applications/Antigravity Pilot.app` to access five native tabs: **Proxy O
 
 ### Icon Switching & Custom Icons
 
-- **Built-in Styles**: Switch anytime between **Pilot Icon** and **Original** in **App Icon Style** (applies only to the proxy copy; `/Applications/Antigravity Pilot.app` always keeps the `PILOT` icon).
-- **Custom PNG Icon**: Replace `icon.png` in the repo root (recommended `1024×1024` transparent canvas, `824×824` centered squircle, `100 px` padding) and run `./build.sh`.
+- **Built-in Styles**: Switch anytime between **Badged (Rec.)**, **Original**, and **Pilot** in **App Icon Style** (applies only to the proxy copy; `/Applications/Antigravity Pilot.app` always keeps the `PILOT` icon).
+- **Custom PNG Icon**: Replace `icon.png` (recommended `1024×1024` transparent canvas, `824×824` centered squircle, `100 px` padding) or `menubar-icon.png` (monochrome menu bar icon) in the repo root and run `./build.sh`.
 
 ### Updating Pilot & Original Antigravity
 
 - **Updating Antigravity Pilot**: Click the version badge at the bottom of the sidebar to check GitHub Releases, download the DMG over direct/proxy routes, verify SHA-256, and update in place.
-- **Updating Original `/Applications/Antigravity.app`**: The isolated proxy copy disables the built-in Squirrel updater (which otherwise fails due to Bundle ID/signature mismatch). Instead, Pilot checks Google's official feed through your local proxy; click **Update & Rebuild** to verify SHA-512 + Google's Developer ID signature, quit running instances, atomically update `/Applications/Antigravity.app`, and rebuild & relaunch your proxy copy (manual updates to the original app are also detected automatically).
+- **Updating Original `/Applications/Antigravity.app`**: The copy disables Squirrel's failing updater; instead, Pilot checks Google's feed over your proxy. Click **Update & Rebuild** to verify SHA-512 + Google's signature and atomically update & rebuild; Pilot also sends native macOS notifications whenever the original app updates.
 
 ### Stop Background Processes
 
@@ -171,9 +171,9 @@ rm -rf "$HOME/.gemini/config/plugins/antigravity-pilot"
 
 1. **Zero-Intrusion Isolated Copy**: `/Applications/Antigravity.app` uses Hardened Runtime and blocks external dylib injection, so Pilot keeps it read-only and creates an isolated user-space runtime copy with merged entitlements and local ad-hoc re-signing.
 2. **Three-Channel No-TUN Proxy**: `libantigravity_proxy.dylib` (`__DATA,__interpose` + `198.18.0.0/15` FakeIP over SOCKS5), Go/Node env vars, and primary Chromium `--proxy-server` flags work together while bypassing LAN CIDRs via `NO_PROXY`.
-3. **0.1s Hot-Update & Single Dock Icon**: `AntigravityProxyLauncher` reads external `proxy.env` first and replaces itself via `execv()`, so port or `NO_PROXY` edits only rewrite the env file without copying or re-signing.
+3. **0.1s Hot-Update & Single Dock Icon**: `AntigravityProxyLauncher` reads external `proxy.env` and replaces itself via `execv()`, so port edits only rewrite config without re-signing, while source SHA-256 hashes prevent false rebuilds after ad-hoc `codesign`.
 4. **Native Live Telemetry**: Discovers `~/.gemini/antigravity/daemon/hub_*.json` and queries proxy-free loopback Connect-RPC for context usage, performance metrics, and shared quota pools.
-5. **Incremental Usage & Cost Estimates**: Incrementally scans `transcript.jsonl` by `size + mtime` into `usage_cache.json` and estimates daily/per-model API costs via built-in or `custom_pricing.json` rules.
+5. **Incremental Usage & Cost Estimates**: Incrementally scans Desktop + CLI session logs into `usage_cache.json` by `size + mtime` and estimates API costs via auto-synced `pricing-catalog.json` (overridable via `custom_pricing.json`).
 6. **Official In-App Dashboard & ASAR Sync**: Serves a zero-JS, 0-token-refresh dashboard via official MCP Apps (SEP-1865), and updates `app.asar` + `ElectronAsarIntegrity` with 4-byte Chromium Pickle alignment when applying the Pilot icon.
 
 ---
@@ -185,14 +185,18 @@ rm -rf "$HOME/.gemini/config/plugins/antigravity-pilot"
 Xcode Command Line Tools are required (`xcode-select --install`):
 
 ```bash
-# Build macOS 13.0+ Universal (arm64 + x86_64) app & native binaries
+# Build macOS 13.0+ Universal (arm64 + x86_64) app & native binaries (incremental build/.cache enabled)
 ./build.sh
+
+# Fast incremental build for the host architecture only during local development
+./build.sh --native
 
 # Typecheck web dashboard, rebuild HTML bundle, and package .dmg + latest.json (prints SHA256)
 npm --prefix src/McpAppWeb run typecheck && ./build.sh --build-web --dmg
 ```
 
-Options & overrides: pass `--notes-file <path>` for custom release notes; override `APP_VERSION` (default `0.2.0`), `MIN_MACOS` (default `13.0`), `ARCHS` (default `"arm64 x86_64"`), or `GITHUB_REPO`.
+- **Build flags**: `--native` builds for host arch only; `--clean` wipes `build/.cache` for a cold rebuild; `--notes-file <path>` supplies release notes.
+- **Env overrides**: `APP_VERSION` (`0.2.0`), `MIN_MACOS` (`13.0`), `ARCHS` (`"arm64 x86_64"`), and `GITHUB_REPO`.
 
 Outputs: `build/Antigravity Pilot.app`, `build/Antigravity-Pilot-v0.2.0-macOS13-universal.dmg`, `build/latest.json`, `build/antigravity-pilot-mcp`, `build/libantigravity_proxy.dylib`, `build/AntigravityProxyLauncher`, `build/test_client`.
 
