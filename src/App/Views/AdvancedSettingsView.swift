@@ -7,6 +7,9 @@ struct AdvancedSettingsView: View {
     @ObservedObject var appModel: AppModel
     var onHideToMenuBar: () -> Void
 
+    @State private var isNoProxyExpanded = false
+    @State private var isMaintenanceExpanded = false
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 8) {
@@ -16,23 +19,17 @@ struct AdvancedSettingsView: View {
                 chartPaletteCard
                     .disabled(appModel.isAnyOperationBusy)
 
-                noProxyCard
+                behaviorCard
                     .disabled(appModel.isAnyOperationBusy)
 
-                behaviorCard
+                noProxyCard
                     .disabled(appModel.isAnyOperationBusy)
 
                 maintenanceCard
                     .disabled(appModel.isAnyOperationBusy)
-
-                if let error = appModel.errorMessage {
-                    messageBanner(error, isError: true)
-                } else if let success = appModel.bannerSuccessMessage {
-                    messageBanner(success, isError: false)
-                }
             }
             .padding(.horizontal, 22)
-            .padding(.vertical, 10)
+            .padding(.vertical, 12)
         }
         .onChange(of: appModel.config.appLanguage) { _ in
             appModel.applyLanguageChange()
@@ -50,34 +47,39 @@ struct AdvancedSettingsView: View {
 
     private var languageCard: some View {
         PilotCard(padding: 10) {
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 12) {
-                    Label(L10n.t("界面语言", "Language", lang), systemImage: "globe")
-                        .font(.subheadline.weight(.semibold))
+            HStack(spacing: 12) {
+                Label(L10n.t("界面语言", "Language", lang), systemImage: "globe")
+                    .font(.subheadline.weight(.semibold))
 
-                    Spacer()
-
-                    Picker("", selection: $appModel.config.appLanguage) {
-                        ForEach(AppLanguage.allCases) { option in
-                            Text(option.displayName(in: lang)).tag(option)
-                        }
-                    }
-                    .labelsHidden()
-                    .pickerStyle(.menu)
-                    .frame(width: 185)
-                }
+                Spacer()
 
                 if appModel.config.appLanguage == .system {
                     Text(L10n.t(
+                        zhHans: "跟随系统",
+                        zhHant: "跟隨系統",
+                        en: "Auto",
+                        ru: "Авто",
+                        lang
+                    ))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .help(L10n.t(
                         zhHans: "当前跟随系统语言：简体中文（不支持的系统语言默认显示 English）",
                         zhHant: "目前跟隨系統語言：繁體中文（不支援的系統語言預設顯示 English）",
                         en: "Following system language: English (unsupported languages default to English)",
                         ru: "Язык системы: Русский (неподдерживаемые языки по умолчанию — English)",
                         lang
                     ))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
                 }
+
+                Picker("", selection: $appModel.config.appLanguage) {
+                    ForEach(AppLanguage.allCases) { option in
+                        Text(option.displayName(in: lang)).tag(option)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .frame(width: 185)
             }
         }
     }
@@ -132,70 +134,116 @@ struct AdvancedSettingsView: View {
         }
     }
 
-    private var noProxyCard: some View {
-        PilotCard(padding: 10) {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack {
-                    Label(L10n.t("NO_PROXY 绕过规则", "NO_PROXY Bypass Rules", lang), systemImage: "arrow.triangle.branch")
-                        .font(.subheadline.weight(.semibold))
-                    Spacer()
-                    Button(L10n.t("恢复默认", "Reset Defaults", lang)) {
-                        appModel.config.noProxy = ProxyConfig.defaultNoProxy
-                        appModel.saveNoProxyNow()
-                    }
-                    .controlSize(.small)
-                }
-
-                Text(L10n.t(
-                    "支持局域网 CIDR（如 192.168.0.0/16）与域名后缀（如 *.local），同时作用于 dylib hook、环境变量与 Chromium 主进程。",
-                    "Supports LAN CIDRs (e.g. 192.168.0.0/16) and domain suffixes (e.g. *.local) across dylib hook, env vars, and Chromium.",
-                    lang
-                ))
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-
-                TextField("localhost,127.0.0.1,192.168.0.0/16,*.local", text: $appModel.config.noProxy, axis: .vertical)
-                    .textFieldStyle(.roundedBorder)
-                    .lineLimit(2...3)
-                    .font(.system(.caption, design: .monospaced))
-            }
-        }
-    }
-
     private var behaviorCard: some View {
         PilotCard(padding: 10) {
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 8) {
                 Label(L10n.t("菜单栏与开机自启", "Menu Bar & Login Item", lang), systemImage: "menubar.rectangle")
                     .font(.subheadline.weight(.semibold))
 
                 Divider()
 
-                Toggle(
-                    L10n.t(
-                        "显示顶部菜单栏图标（关闭窗口后缩入菜单栏常驻监控）",
-                        "Show top menu bar icon (minimize to menu bar when window closes)",
-                        lang
-                    ),
-                    isOn: $appModel.config.enableMenuBarMonitor
-                )
-                .font(.callout)
-
-                if appModel.config.enableMenuBarMonitor {
+                HStack(spacing: 10) {
                     Toggle(
-                        L10n.t(
-                            "菜单栏显示实时上下文与配额指标（如 188K · 89%）",
-                            "Show live context & quota metrics in menu bar (e.g. 188K · 89%)",
-                            lang
-                        ),
-                        isOn: Binding(
-                            get: { appModel.config.hasAnyMenuBarContent },
-                            set: { enabled in
-                                appModel.config.setMenuBarMetricsMaster(enabled)
-                                appModel.savePreferencesOnly()
-                            }
-                        )
+                        L10n.t("显示顶部菜单栏图标", "Show Menu Bar Icon", lang),
+                        isOn: $appModel.config.enableMenuBarMonitor
                     )
                     .font(.callout)
+                    .help(L10n.t(
+                        zhHans: "关闭后不显示 macOS 顶部菜单栏小图标；关闭主窗口将直接退出 Pilot。",
+                        zhHant: "關閉後不顯示 macOS 頂部選單列小圖示；關閉主視窗將直接結束 Pilot。",
+                        en: "Hide the macOS top menu bar icon; closing the main window will quit Pilot.",
+                        ru: "Скрыть значок в строке меню macOS; закрытие главного окна завершит Pilot.",
+                        lang
+                    ))
+
+                    Spacer(minLength: 8)
+
+                    Text(L10n.t(
+                        zhHans: "关闭窗口后常驻菜单栏",
+                        zhHant: "關閉視窗後常駐選單列",
+                        en: "Minimize to menu bar on close",
+                        ru: "Сворачивать в меню при закрытии",
+                        lang
+                    ))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                }
+
+                if appModel.config.enableMenuBarMonitor {
+                    HStack(spacing: 8) {
+                        HStack(spacing: 6) {
+                            Text(L10n.t(
+                                zhHans: "菜单栏显示内容",
+                                zhHant: "選單列顯示內容",
+                                en: "Menu Bar Display",
+                                ru: "Строка меню",
+                                lang
+                            ))
+                            .font(.callout)
+                            .lineLimit(1)
+
+                            Text(menuBarPreviewText)
+                                .font(.system(.caption2, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(
+                                    Capsule()
+                                        .fill(Color.primary.opacity(0.05))
+                                )
+                                .lineLimit(1)
+                        }
+
+                        Spacer(minLength: 8)
+
+                        HStack(spacing: 6) {
+                            menuBarCheckboxChip(
+                                title: L10n.t(
+                                    zhHans: "运行状态",
+                                    zhHant: "執行狀態",
+                                    en: "Running",
+                                    ru: "Статус",
+                                    lang
+                                ),
+                                isOn: appModel.config.showMenuBarRunningStatus
+                            ) {
+                                appModel.config.showMenuBarRunningStatus.toggle()
+                                appModel.config.syncMenuBarMetricsMasterFlag()
+                                appModel.savePreferencesOnly()
+                            }
+
+                            menuBarCheckboxChip(
+                                title: L10n.t(
+                                    zhHans: "上下文",
+                                    zhHant: "上下文",
+                                    en: "Context",
+                                    ru: "Контекст",
+                                    lang
+                                ),
+                                isOn: appModel.config.showMenuBarContextUsage
+                            ) {
+                                appModel.config.showMenuBarContextUsage.toggle()
+                                appModel.config.syncMenuBarMetricsMasterFlag()
+                                appModel.savePreferencesOnly()
+                            }
+
+                            menuBarCheckboxChip(
+                                title: L10n.t(
+                                    zhHans: "剩余配额",
+                                    zhHant: "剩餘配額",
+                                    en: "Quota",
+                                    ru: "Квота",
+                                    lang
+                                ),
+                                isOn: appModel.config.showMenuBarQuotaPercent
+                            ) {
+                                appModel.config.showMenuBarQuotaPercent.toggle()
+                                appModel.config.syncMenuBarMetricsMasterFlag()
+                                appModel.savePreferencesOnly()
+                            }
+                        }
+                    }
                     .padding(.leading, 18)
                 }
 
@@ -221,62 +269,201 @@ struct AdvancedSettingsView: View {
         }
     }
 
-    private var maintenanceCard: some View {
+    private var menuBarPreviewText: String {
+        var parts: [String] = []
+        if appModel.config.showMenuBarContextUsage {
+            parts.append("148K")
+        }
+        if appModel.config.showMenuBarQuotaPercent {
+            parts.append("5h39%")
+        }
+        let metrics = parts.joined(separator: " ")
+        if appModel.config.showMenuBarRunningStatus {
+            return metrics.isEmpty ? "◌2" : "◌2 \(metrics)"
+        }
+        if !metrics.isEmpty {
+            return metrics
+        }
+        return L10n.t(
+            zhHans: "仅显示图标",
+            zhHant: "僅顯示圖示",
+            en: "Icon only",
+            ru: "Только значок",
+            lang
+        )
+    }
+
+    private func menuBarCheckboxChip(
+        title: String,
+        isOn: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: isOn ? "checkmark.square.fill" : "square")
+                    .font(.system(size: 12))
+                    .foregroundStyle(isOn ? Color.accentColor : Color.secondary.opacity(0.45))
+
+                Text(title)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(isOn ? .primary : .secondary)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3.5)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(isOn ? Color.accentColor.opacity(0.08) : Color.primary.opacity(0.03))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .strokeBorder(isOn ? Color.accentColor.opacity(0.38) : Color.primary.opacity(0.08), lineWidth: 1)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var noProxyRuleCount: Int {
+        appModel.config.effectiveNoProxy
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .count
+    }
+
+    private var noProxyCard: some View {
         PilotCard(padding: 10) {
-            VStack(alignment: .leading, spacing: 6) {
-                Label(L10n.t("通道摘要与副本维护", "Channel Summary & Maintenance", lang), systemImage: "wrench.and.screwdriver")
-                    .font(.subheadline.weight(.semibold))
+            VStack(alignment: .leading, spacing: 8) {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        isNoProxyExpanded.toggle()
+                    }
+                } label: {
+                    HStack(spacing: 8) {
+                        Label(L10n.t("NO_PROXY 绕过规则", "NO_PROXY Bypass Rules", lang), systemImage: "arrow.triangle.branch")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.primary)
 
-                PilotRecessedBox(padding: 7) {
-                    VStack(alignment: .leading, spacing: 2.5) {
-                        Text("dylib Hook: \(appModel.config.hookProxyURL)")
-                            .font(.system(.caption, design: .monospaced))
-                        Text("Env / Chromium: \(appModel.config.envProxyURL)")
-                            .font(.system(.caption, design: .monospaced))
-                        Text("\(L10n.t("配置目录", "Config Dir", lang)): \(appModel.support.root.path)")
-                            .font(.system(.caption, design: .monospaced))
+                        Spacer(minLength: 8)
+
+                        Text(L10n.t(
+                            zhHans: "\(noProxyRuleCount) 条规则",
+                            zhHant: "\(noProxyRuleCount) 條規則",
+                            en: "\(noProxyRuleCount) rules",
+                            ru: "\(noProxyRuleCount) правил",
+                            lang
+                        ))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.semibold))
                             .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
+                            .rotationEffect(.degrees(isNoProxyExpanded ? 90 : 0))
                     }
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
 
-                HStack {
-                    Button(L10n.t("打开配置目录", "Open Config Folder", lang)) {
-                        try? appModel.support.ensureRoot()
-                        NSWorkspace.shared.open(appModel.support.root)
-                    }
-                    .controlSize(.small)
+                if isNoProxyExpanded {
+                    Divider()
 
-                    Spacer()
+                    HStack(alignment: .center, spacing: 8) {
+                        Text(L10n.t(
+                            "支持局域网 CIDR（如 192.168.0.0/16）与域名后缀（如 *.local），同时作用于 dylib hook、环境变量与 Chromium 主进程。",
+                            "Supports LAN CIDRs (e.g. 192.168.0.0/16) and domain suffixes (e.g. *.local) across dylib hook, env vars, and Chromium.",
+                            lang
+                        ))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
 
-                    Button(L10n.t("强制完整重建副本", "Force Full Rebuild", lang)) {
-                        appModel.saveAndStart(
-                            forceRebuild: true,
-                            terminateRunningFirst: !appModel.runningInstances.isEmpty
-                        ) {
-                            onHideToMenuBar()
+                        Spacer(minLength: 8)
+
+                        Button(L10n.t("恢复默认", "Reset Defaults", lang)) {
+                            appModel.config.noProxy = ProxyConfig.defaultNoProxy
+                            appModel.saveNoProxyNow()
                         }
+                        .controlSize(.small)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.orange)
-                    .controlSize(.small)
+
+                    TextField("localhost,127.0.0.1,192.168.0.0/16,*.local", text: $appModel.config.noProxy, axis: .vertical)
+                        .textFieldStyle(.roundedBorder)
+                        .lineLimit(2...4)
+                        .font(.system(.caption, design: .monospaced))
                 }
             }
         }
     }
 
-    private func messageBanner(_ message: String, isError: Bool) -> some View {
-        let color: Color = isError ? .red : .green
-        return PilotCard(padding: 11, accentTint: color) {
-            HStack(alignment: .top, spacing: 8) {
-                Image(systemName: isError ? "exclamationmark.octagon.fill" : "checkmark.circle.fill")
-                    .foregroundStyle(color)
-                    .padding(.top, 1)
-                Text(message)
-                    .font(.footnote)
-                    .foregroundStyle(color)
-                    .fixedSize(horizontal: false, vertical: true)
+    private var maintenanceCard: some View {
+        PilotCard(padding: 10) {
+            VStack(alignment: .leading, spacing: 8) {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        isMaintenanceExpanded.toggle()
+                    }
+                } label: {
+                    HStack(spacing: 8) {
+                        Label(L10n.t("通道摘要与副本维护", "Channel Summary & Maintenance", lang), systemImage: "wrench.and.screwdriver")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.primary)
+
+                        Spacer(minLength: 8)
+
+                        Text("socks5 :\(appModel.config.hookPort)")
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(.secondary)
+
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .rotationEffect(.degrees(isMaintenanceExpanded ? 90 : 0))
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+
+                if isMaintenanceExpanded {
+                    Divider()
+
+                    PilotRecessedBox(padding: 7) {
+                        VStack(alignment: .leading, spacing: 2.5) {
+                            Text("dylib Hook: \(appModel.config.hookProxyURL)")
+                                .font(.system(.caption, design: .monospaced))
+                            Text("Env / Chromium: \(appModel.config.envProxyURL)")
+                                .font(.system(.caption, design: .monospaced))
+                            Text("\(L10n.t("配置目录", "Config Dir", lang)): \(appModel.support.root.path)")
+                                .font(.system(.caption, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
+                    }
+
+                    HStack {
+                        Button(L10n.t("打开配置目录", "Open Config Folder", lang)) {
+                            try? appModel.support.ensureRoot()
+                            NSWorkspace.shared.open(appModel.support.root)
+                        }
+                        .controlSize(.small)
+
+                        Spacer()
+
+                        Button(L10n.t("强制完整重建副本", "Force Full Rebuild", lang)) {
+                            appModel.saveAndStart(
+                                forceRebuild: true,
+                                terminateRunningFirst: !appModel.runningInstances.isEmpty
+                            ) {
+                                onHideToMenuBar()
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.orange)
+                        .controlSize(.small)
+                    }
+                }
             }
         }
     }

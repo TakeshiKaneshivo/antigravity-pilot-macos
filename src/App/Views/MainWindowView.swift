@@ -146,6 +146,13 @@ struct MainWindowView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                 }
             }
+            .overlay(alignment: .bottom) {
+                feedbackToastOverlay
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 12)
+            }
+            .animation(.easeInOut(duration: 0.2), value: appModel.errorMessage)
+            .animation(.easeInOut(duration: 0.2), value: appModel.bannerSuccessMessage)
         }
         .environment(\.appLanguage, lang)
         .environment(\.chartPalette, appModel.config.chartPalette)
@@ -288,7 +295,7 @@ struct MainWindowView: View {
                                 let sidebarText: String = {
                                     if count > 1 {
                                         if let metrics = monitorStore.compactMetricsText {
-                                            return "\(count) · \(metrics)"
+                                            return "\(count) \(metrics)"
                                         }
                                         return "\(count)"
                                     }
@@ -603,6 +610,59 @@ struct MainWindowView: View {
         case .notBuilt: return .secondary
         case .missingSource: return .red
         }
+    }
+
+    @ViewBuilder
+    private var feedbackToastOverlay: some View {
+        if let error = appModel.errorMessage {
+            feedbackToastCard(message: error, isError: true)
+        } else if let success = appModel.bannerSuccessMessage {
+            feedbackToastCard(message: success, isError: false)
+        }
+    }
+
+    private func feedbackToastCard(message: String, isError: Bool) -> some View {
+        let accent: Color = isError ? .red : .green
+        return HStack(alignment: .center, spacing: 8) {
+            Image(systemName: isError ? "exclamationmark.octagon.fill" : "checkmark.circle.fill")
+                .font(.callout)
+                .foregroundStyle(accent)
+
+            Text(message)
+                .font(.footnote.weight(.medium))
+                .foregroundStyle(.primary)
+                .lineLimit(3)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Button {
+                appModel.dismissFeedback()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 18, height: 18)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .help(L10n.t("关闭", "Dismiss", lang))
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .frame(maxWidth: 520)
+        .background {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(.regularMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(accent.opacity(0.08))
+                )
+        }
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(accent.opacity(0.32), lineWidth: 1)
+        )
+        .shadow(color: Color.black.opacity(0.14), radius: 10, x: 0, y: 4)
+        .transition(.move(edge: .bottom).combined(with: .opacity))
     }
 
     private var healthDotColor: Color {

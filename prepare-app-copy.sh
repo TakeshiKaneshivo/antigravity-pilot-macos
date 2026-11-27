@@ -91,6 +91,8 @@ cp "$ROOT/build/libantigravity_proxy.dylib" "$DEST_APP/Contents/Resources/libant
 
 SOURCE_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$SOURCE_APP/Contents/Info.plist" 2>/dev/null || true)"
 SOURCE_BUILD="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$SOURCE_APP/Contents/Info.plist" 2>/dev/null || true)"
+LAUNCHER_SHA256="$(shasum -a 256 "$ROOT/build/AntigravityProxyLauncher" | awk '{print $1}')"
+DYLIB_SHA256="$(shasum -a 256 "$ROOT/build/libantigravity_proxy.dylib" | awk '{print $1}')"
 cat >"$DEST_APP/Contents/Resources/proxy.env" <<EOF
 AG_PROXY=$PROXY_URL
 AG_PROXY_LOG=0
@@ -110,6 +112,12 @@ if [[ -n "$SOURCE_VERSION" ]]; then
 fi
 if [[ -n "$SOURCE_BUILD" ]]; then
   printf 'AG_SOURCE_BUILD=%s\n' "$SOURCE_BUILD" >>"$DEST_APP/Contents/Resources/proxy.env"
+fi
+if [[ -n "$LAUNCHER_SHA256" ]]; then
+  printf 'AG_LAUNCHER_SOURCE_SHA256=%s\n' "$LAUNCHER_SHA256" >>"$DEST_APP/Contents/Resources/proxy.env"
+fi
+if [[ -n "$DYLIB_SHA256" ]]; then
+  printf 'AG_DYLIB_SOURCE_SHA256=%s\n' "$DYLIB_SHA256" >>"$DEST_APP/Contents/Resources/proxy.env"
 fi
 
 PROXY_ICON_NAME="antigravity-pilot.icns"

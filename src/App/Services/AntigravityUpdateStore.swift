@@ -337,14 +337,13 @@ final class AntigravityUpdateStore: ObservableObject {
                     appModel.savePreferencesOnly()
                     appModel.refreshRuntimeStatus()
                     appModel.refreshRunningInstances()
-                    appModel.errorMessage = nil
-                    appModel.bannerSuccessMessage = L10n.t(
+                    appModel.showSuccessFeedback(L10n.t(
                         zhHans: "已更新原版 Antigravity 至 \(manifest.version) 并重建启动副本",
                         zhHant: "已更新原版 Antigravity 至 \(manifest.version) 並重建啟動副本",
                         en: "Updated Antigravity to \(manifest.version) & rebuilt runtime copy",
                         ru: "Antigravity обновлён до \(manifest.version), копия пересобрана и запущена",
                         lang
-                    )
+                    ))
 
                     self.cachedAvailableState = nil
                     self.state = .upToDate(

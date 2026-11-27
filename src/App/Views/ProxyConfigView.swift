@@ -22,6 +22,10 @@ struct ProxyConfigView: View {
         appModel.isWorking || antigravityUpdateStore.state.isBusy
     }
 
+    private var originalRunningInstances: [RunningInstanceInfo] {
+        appModel.runningInstances.filter { $0.kind == .original }
+    }
+
     private struct PortPreset: Identifiable {
         let id: String
         let shortTitle: String
@@ -56,7 +60,7 @@ struct ProxyConfigView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 8) {
-                if !appModel.runningInstances.isEmpty {
+                if !originalRunningInstances.isEmpty {
                     runningConflictBanner
                 }
 
@@ -75,14 +79,6 @@ struct ProxyConfigView: View {
                 }
 
                 quickActionsStrip
-
-                menuBarDisplayCard
-
-                if let error = appModel.errorMessage {
-                    messageBanner(error, isError: true)
-                } else if let success = appModel.bannerSuccessMessage {
-                    messageBanner(success, isError: false)
-                }
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 9)
@@ -98,9 +94,6 @@ struct ProxyConfigView: View {
         }
         .onChange(of: appModel.config.runtimeIconStyle) { _ in
             appModel.refreshRuntimeStatus()
-        }
-        .onChange(of: appModel.config.enableMenuBarMonitor) { _ in
-            appModel.savePreferencesOnly()
         }
         .onChange(of: antigravityUpdateStore.state) { newState in
             if case .failed = newState {
@@ -564,6 +557,8 @@ struct ProxyConfigView: View {
                     }
                 }
 
+                Spacer()
+
                 if case .notInstalled = appModel.mcpPluginStatus {
                     Button(L10n.t("一键安装", "Install", lang)) {
                         appModel.installOrUpdateMcpPlugin()
@@ -578,175 +573,8 @@ struct ProxyConfigView: View {
                     .buttonStyle(.bordered)
                     .controlSize(.small)
                 }
-
-                Spacer()
-
-                Divider()
-                    .frame(height: 24)
-
-                Toggle(L10n.t("显示顶部菜单栏图标", "Show Menu Bar Icon", lang), isOn: $appModel.config.enableMenuBarMonitor)
-                    .font(.callout)
-                    .disabled(isBusy)
-                    .help(L10n.t(
-                        "关闭后不显示 macOS 顶部菜单栏小图标；关闭主窗口将直接退出 Pilot。",
-                        "Hide the macOS top menu bar icon; closing the main window will quit Pilot.",
-                        lang
-                    ))
             }
         }
-    }
-
-    private var menuBarDisplayCard: some View {
-        PilotCard(padding: 9) {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 8) {
-                    Label(
-                        L10n.t(
-                            zhHans: "菜单栏显示内容",
-                            zhHant: "選單列顯示內容",
-                            en: "Menu Bar Display",
-                            ru: "Элементы в строке меню",
-                            lang
-                        ),
-                        systemImage: "menubar.rectangle"
-                    )
-                    .font(.subheadline.weight(.semibold))
-                    .lineLimit(1)
-
-                    Spacer(minLength: 8)
-
-                    Text(menuBarPreviewText)
-                        .font(.system(.caption2, design: .monospaced))
-                        .foregroundStyle(.tertiary)
-                        .lineLimit(1)
-                }
-
-                HStack(spacing: 8) {
-                    menuBarOptionTile(
-                        title: L10n.t(
-                            zhHans: "运行状态",
-                            zhHant: "執行狀態",
-                            en: "Running",
-                            ru: "Активность",
-                            lang
-                        ),
-                        sample: "◌2",
-                        isOn: appModel.config.showMenuBarRunningStatus
-                    ) {
-                        appModel.config.showMenuBarRunningStatus.toggle()
-                        appModel.config.syncMenuBarMetricsMasterFlag()
-                        appModel.savePreferencesOnly()
-                    }
-
-                    menuBarOptionTile(
-                        title: L10n.t(
-                            zhHans: "上下文",
-                            zhHant: "上下文",
-                            en: "Context",
-                            ru: "Контекст",
-                            lang
-                        ),
-                        sample: "18K",
-                        isOn: appModel.config.showMenuBarContextUsage
-                    ) {
-                        appModel.config.showMenuBarContextUsage.toggle()
-                        appModel.config.syncMenuBarMetricsMasterFlag()
-                        appModel.savePreferencesOnly()
-                    }
-
-                    menuBarOptionTile(
-                        title: L10n.t(
-                            zhHans: "剩余配额",
-                            zhHant: "剩餘配額",
-                            en: "Quota",
-                            ru: "Квота",
-                            lang
-                        ),
-                        sample: "47%",
-                        isOn: appModel.config.showMenuBarQuotaPercent
-                    ) {
-                        appModel.config.showMenuBarQuotaPercent.toggle()
-                        appModel.config.syncMenuBarMetricsMasterFlag()
-                        appModel.savePreferencesOnly()
-                    }
-                }
-            }
-        }
-        .disabled(!appModel.config.enableMenuBarMonitor || isBusy)
-        .opacity(appModel.config.enableMenuBarMonitor ? 1 : 0.55)
-    }
-
-    private var menuBarPreviewText: String {
-        guard appModel.config.enableMenuBarMonitor else {
-            return L10n.t(
-                zhHans: "菜单栏图标已关闭",
-                zhHant: "選單列圖示已關閉",
-                en: "Menu bar icon hidden",
-                ru: "Значок скрыт",
-                lang
-            )
-        }
-        var parts: [String] = []
-        if appModel.config.showMenuBarContextUsage {
-            parts.append("18K")
-        }
-        if appModel.config.showMenuBarQuotaPercent {
-            parts.append("47%")
-        }
-        let metrics = parts.joined(separator: " · ")
-        if appModel.config.showMenuBarRunningStatus {
-            return metrics.isEmpty ? "◌2" : "◌2 · \(metrics)"
-        }
-        if !metrics.isEmpty {
-            return metrics
-        }
-        return L10n.t(
-            zhHans: "仅显示图标",
-            zhHant: "僅顯示圖示",
-            en: "Icon only",
-            ru: "Только значок",
-            lang
-        )
-    }
-
-    private func menuBarOptionTile(
-        title: String,
-        sample: String,
-        isOn: Bool,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            HStack(spacing: 6) {
-                Image(systemName: isOn ? "checkmark.square.fill" : "square")
-                    .font(.system(size: 13))
-                    .foregroundStyle(isOn ? Color.accentColor : Color.secondary.opacity(0.45))
-
-                Text(title)
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(isOn ? .primary : .secondary)
-                    .lineLimit(1)
-
-                Spacer(minLength: 4)
-
-                Text(sample)
-                    .font(.system(.caption2, design: .monospaced))
-                    .foregroundStyle(isOn ? Color.secondary : Color.secondary.opacity(0.45))
-                    .lineLimit(1)
-            }
-            .padding(.horizontal, 9)
-            .padding(.vertical, 5.5)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(isOn ? Color.accentColor.opacity(0.08) : Color.primary.opacity(0.03))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .strokeBorder(isOn ? Color.accentColor.opacity(0.45) : Color.primary.opacity(0.08), lineWidth: 1)
-            )
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
     }
 
     private var pluginSummaryText: String {
@@ -843,28 +671,40 @@ struct ProxyConfigView: View {
 
     private var runningConflictBanner: some View {
         let sep = (lang.resolved == .zhHans || lang.resolved == .zhHant) ? "、" : ", "
-        let instanceList = appModel.runningInstances
-            .map { "\($0.kind.localizedName(lang)) (PID \($0.id))" }
+        let pidList = originalRunningInstances
+            .map { "PID \($0.id)" }
             .joined(separator: sep)
         return PilotCard(padding: 9, accentTint: .orange) {
             HStack(alignment: .center, spacing: 8) {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .foregroundStyle(.orange)
                 HStack(spacing: 6) {
-                    Text(L10n.t("检测到 Antigravity 正在运行", "Antigravity Is Running", lang))
-                        .font(.callout.weight(.semibold))
-                        .fixedSize(horizontal: true, vertical: false)
+                    Text(L10n.t(
+                        zhHans: "检测到原版 Antigravity 正在运行（未走代理）",
+                        zhHant: "偵測到原版 Antigravity 正在執行（未走代理）",
+                        en: "Original Antigravity Is Running (No Proxy)",
+                        ru: "Запущен оригинальный Antigravity (без прокси)",
+                        lang
+                    ))
+                    .font(.callout.weight(.semibold))
+                    .fixedSize(horizontal: true, vertical: false)
                     Text("·")
                         .font(.caption)
                         .foregroundStyle(.tertiary)
-                    Text(instanceList)
+                    Text(pidList)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .truncationMode(.tail)
                 }
                 Spacer(minLength: 8)
-                Button(L10n.t("优雅退出并启动", "Quit & Launch", lang)) {
+                Button(L10n.t(
+                    zhHans: "退出原版并启动",
+                    zhHant: "結束原版並啟動",
+                    en: "Quit & Launch Pilot",
+                    ru: "Закрыть и запустить",
+                    lang
+                )) {
                     appModel.saveAndStart(forceRebuild: false, terminateRunningFirst: true) {
                         onHideToMenuBar()
                     }
@@ -1222,21 +1062,6 @@ struct ProxyConfigView: View {
 
         case .idle, .checking, .upToDate, .failed:
             EmptyView()
-        }
-    }
-
-    private func messageBanner(_ message: String, isError: Bool) -> some View {
-        let color: Color = isError ? .red : .green
-        return PilotCard(padding: 9, accentTint: color) {
-            HStack(alignment: .top, spacing: 8) {
-                Image(systemName: isError ? "exclamationmark.octagon.fill" : "checkmark.circle.fill")
-                    .foregroundStyle(color)
-                    .padding(.top, 1)
-                Text(message)
-                    .font(.footnote)
-                    .foregroundStyle(color)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
         }
     }
 

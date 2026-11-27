@@ -491,13 +491,23 @@ final class RuntimeBuilder {
             return .runtimeIncomplete
         }
 
-        guard sha256File(builderLauncher) == sha256File(runtimeLauncher),
-              sha256File(builderDylib) == sha256File(runtimeDylib) else {
+        let sourcePlist = source.appendingPathComponent("Contents/Info.plist")
+        let runtimeProxyEnv = runtime.appendingPathComponent("Contents/Resources/proxy.env")
+        let currentLauncherSHA = sha256File(builderLauncher)
+        let currentDylibSHA = sha256File(builderDylib)
+        let recordedLauncherSHA = readEnvValue(key: "AG_LAUNCHER_SOURCE_SHA256", from: runtimeProxyEnv)
+        let recordedDylibSHA = readEnvValue(key: "AG_DYLIB_SOURCE_SHA256", from: runtimeProxyEnv)
+
+        let binariesMatch: Bool
+        if let recordedLauncherSHA, let recordedDylibSHA {
+            binariesMatch = (recordedLauncherSHA == currentLauncherSHA && recordedDylibSHA == currentDylibSHA)
+        } else {
+            binariesMatch = (currentLauncherSHA == sha256File(runtimeLauncher) && currentDylibSHA == sha256File(runtimeDylib))
+        }
+        guard binariesMatch else {
             return .proxyBinaryUpdated
         }
 
-        let sourcePlist = source.appendingPathComponent("Contents/Info.plist")
-        let runtimeProxyEnv = runtime.appendingPathComponent("Contents/Resources/proxy.env")
         let runtimeAppUpdateYML = runtime.appendingPathComponent("Contents/Resources/app-update.yml")
         if fm.fileExists(atPath: runtimeAppUpdateYML.path) {
             return .legacyUpdaterPresent
@@ -610,13 +620,17 @@ final class RuntimeBuilder {
         try? fileManager.removeItem(at: dylibDest)
         try fileManager.copyItem(at: resources.dylib, to: dylibDest)
         let iconSourceSHA256 = (config.runtimeIconStyle == .original) ? nil : Self.sha256File(resources.iconPNG)
+        let launcherSourceSHA256 = Self.sha256File(resources.launcher)
+        let dylibSourceSHA256 = Self.sha256File(resources.dylib)
         try Self.writeProxyEnv(
             config: config,
             to: appResources.appendingPathComponent("proxy.env"),
             sourceVersion: sourceVersion,
             sourceBuild: sourceBuild,
             iconStyle: config.runtimeIconStyle,
-            iconSourceSHA256: iconSourceSHA256
+            iconSourceSHA256: iconSourceSHA256,
+            launcherSourceSHA256: launcherSourceSHA256,
+            dylibSourceSHA256: dylibSourceSHA256
         )
         try run("/bin/chmod", ["+x", launcherDest.path])
 
@@ -821,6 +835,8 @@ final class RuntimeBuilder {
         sourceBuild: String? = nil,
         iconStyle: RuntimeIconStyle? = nil,
         iconSourceSHA256: String? = nil,
+        launcherSourceSHA256: String? = nil,
+        dylibSourceSHA256: String? = nil,
         pilotAppPath: String? = RuntimeBuilder.currentPilotAppPath()
     ) throws {
         let noProxy = config.effectiveNoProxy
@@ -853,6 +869,12 @@ final class RuntimeBuilder {
         }
         if let iconSourceSHA256, !iconSourceSHA256.isEmpty {
             lines.append("AG_ICON_SOURCE_SHA256=\(iconSourceSHA256)")
+        }
+        if let launcherSourceSHA256, !launcherSourceSHA256.isEmpty {
+            lines.append("AG_LAUNCHER_SOURCE_SHA256=\(launcherSourceSHA256)")
+        }
+        if let dylibSourceSHA256, !dylibSourceSHA256.isEmpty {
+            lines.append("AG_DYLIB_SOURCE_SHA256=\(dylibSourceSHA256)")
         }
         let contents = lines.joined(separator: "\n") + "\n"
         try contents.write(to: url, atomically: true, encoding: .utf8)
@@ -1402,6 +1424,7 @@ final class AppModel: ObservableObject {
     private var runtimeStatusGeneration = 0
     private var debounceHealthTask: Task<Void, Never>?
     private var debounceNoProxyTask: Task<Void, Never>?
+    private var dismissSuccessTask: Task<Void, Never>?
 
     private lazy var cachedOriginalIcon: NSImage = {
         let icnsURL = support.sourceApp.appendingPathComponent("Contents/Resources/icon.icns")
@@ -1487,8 +1510,7 @@ final class AppModel: ObservableObject {
         if !isWorking {
             status = L10n.t("准备就绪", "Ready", config.appLanguage)
         }
-        errorMessage = nil
-        bannerSuccessMessage = nil
+        dismissFeedback()
         checkProxyHealth()
     }
 
@@ -1594,6 +1616,25 @@ final class AppModel: ObservableObject {
                         ru: "Оригинал \(sourceVersion) · Новый значок Pilot — пересоберите для обновления Dock",
                         lang
                     )
+                } else if !evaluation.canHotUpdate, self.runtimeStatusKind == .ready {
+                    self.runtimeStatusKind = .updateNeeded
+                    if let builtVersion, !builtVersion.isEmpty {
+                        self.runtimeSummary = L10n.t(
+                            zhHans: "原版 \(sourceVersion) · 副本 \(builtVersion)",
+                            zhHant: "原版 \(sourceVersion) · 副本 \(builtVersion)",
+                            en: "Source \(sourceVersion) · Copy \(builtVersion)",
+                            ru: "Оригинал \(sourceVersion) · Копия \(builtVersion)",
+                            lang
+                        )
+                    } else {
+                        self.runtimeSummary = L10n.t(
+                            zhHans: "原版 \(sourceVersion) · 代理副本待同步",
+                            zhHant: "原版 \(sourceVersion) · 代理副本待同步",
+                            en: "Source \(sourceVersion) · Runtime copy needs sync",
+                            ru: "Оригинал \(sourceVersion) · Требуется синхронизация копии",
+                            lang
+                        )
+                    }
                 }
             }
         }
@@ -1631,11 +1672,39 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func showSuccessFeedback(_ message: String, autoDismissAfter seconds: Double = 3.5) {
+        dismissSuccessTask?.cancel()
+        errorMessage = nil
+        bannerSuccessMessage = message
+        let delayNs = UInt64(max(0.5, seconds) * 1_000_000_000)
+        dismissSuccessTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: delayNs)
+            guard !Task.isCancelled else { return }
+            self?.bannerSuccessMessage = nil
+        }
+    }
+
+    func showErrorFeedback(_ message: String) {
+        dismissSuccessTask?.cancel()
+        bannerSuccessMessage = nil
+        errorMessage = message
+    }
+
+    func dismissFeedback() {
+        dismissSuccessTask?.cancel()
+        errorMessage = nil
+        bannerSuccessMessage = nil
+    }
+
+    func clearSuccessFeedbackIfNeeded() {
+        dismissSuccessTask?.cancel()
+        bannerSuccessMessage = nil
+    }
+
     func installOrUpdateMcpPlugin() {
         guard !isUpdatingMcpPlugin else { return }
         isUpdatingMcpPlugin = true
-        errorMessage = nil
-        bannerSuccessMessage = nil
+        dismissFeedback()
 
         let version = appVersionText
         let currentSupport = support
@@ -1646,21 +1715,21 @@ final class AppModel: ObservableObject {
                     try McpPluginInstaller(support: currentSupport).installOrUpdate(appVersion: version, language: lang)
                 }.value
                 refreshMcpPluginStatus()
-                bannerSuccessMessage = L10n.t(
+                showSuccessFeedback(L10n.t(
                     zhHans: "已安装 Antigravity 应用内看板插件（v\(version)），可在左侧边栏或对话右上角 + 菜单打开。",
                     zhHant: "已安裝 Antigravity 應用內看板外掛（v\(version)），可在左側邊欄或對話右上角 + 選單開啟。",
                     en: "Installed Antigravity in-app dashboard plugin (v\(version)). Open from the left sidebar or chat + menu.",
                     ru: "Плагин панели установлен (v\(version)). Откройте из боковой панели или меню + в чате.",
                     lang
-                )
+                ))
             } catch {
-                errorMessage = L10n.t(
+                showErrorFeedback(L10n.t(
                     zhHans: "安装应用内插件失败：\(error.localizedDescription)",
                     zhHant: "安裝應用內外掛失敗：\(error.localizedDescription)",
                     en: "Failed to install in-app plugin: \(error.localizedDescription)",
                     ru: "Ошибка установки плагина: \(error.localizedDescription)",
                     lang
-                )
+                ))
             }
             isUpdatingMcpPlugin = false
         }
@@ -1669,8 +1738,7 @@ final class AppModel: ObservableObject {
     func uninstallMcpPlugin() {
         guard !isUpdatingMcpPlugin else { return }
         isUpdatingMcpPlugin = true
-        errorMessage = nil
-        bannerSuccessMessage = nil
+        dismissFeedback()
 
         let currentSupport = support
         let lang = config.appLanguage
@@ -1680,19 +1748,19 @@ final class AppModel: ObservableObject {
                     try McpPluginInstaller(support: currentSupport).uninstall()
                 }.value
                 refreshMcpPluginStatus()
-                bannerSuccessMessage = L10n.t(
+                showSuccessFeedback(L10n.t(
                     "已卸载 Antigravity 应用内看板插件。",
                     "Uninstalled Antigravity in-app dashboard plugin.",
                     lang
-                )
+                ))
             } catch {
-                errorMessage = L10n.t(
+                showErrorFeedback(L10n.t(
                     zhHans: "卸载应用内插件失败：\(error.localizedDescription)",
                     zhHant: "解除安裝應用內外掛失敗：\(error.localizedDescription)",
                     en: "Failed to uninstall in-app plugin: \(error.localizedDescription)",
                     ru: "Ошибка удаления плагина: \(error.localizedDescription)",
                     lang
-                )
+                ))
             }
             isUpdatingMcpPlugin = false
         }
@@ -1704,13 +1772,13 @@ final class AppModel: ObservableObject {
             try LoginItemManager.setEnabled(enabled)
             errorMessage = nil
         } catch {
-            errorMessage = L10n.t(
+            showErrorFeedback(L10n.t(
                 zhHans: "设置登录时启动失败：\(error.localizedDescription)",
                 zhHant: "設定登入時啟動失敗：\(error.localizedDescription)",
                 en: "Failed to update login item: \(error.localizedDescription)",
                 ru: "Ошибка настройки автозапуска: \(error.localizedDescription)",
                 lang
-            )
+            ))
         }
         refreshLoginItemState()
     }
@@ -1724,7 +1792,7 @@ final class AppModel: ObservableObject {
             }
             refreshRuntimeStatus()
         } catch {
-            errorMessage = error.localizedDescription
+            showErrorFeedback(error.localizedDescription)
         }
     }
 
@@ -1777,8 +1845,7 @@ final class AppModel: ObservableObject {
     func start(forceRebuild: Bool, terminateRunningFirst: Bool, onLaunchComplete: (() -> Void)?) async {
         let lang = config.appLanguage
         isWorking = true
-        errorMessage = nil
-        bannerSuccessMessage = nil
+        dismissFeedback()
         status = L10n.t("检查代理端口...", "Checking proxy ports...", lang)
 
         do {
@@ -1814,10 +1881,10 @@ final class AppModel: ObservableObject {
                     let sep = (lang.resolved == .zhHans || lang.resolved == .zhHant) ? "、" : ", "
                     let names = instances.map { "\($0.kind.localizedName(lang)) (PID \($0.id))" }.joined(separator: sep)
                     throw BuilderError.commandFailed(L10n.t(
-                        zhHans: "检测到正在运行的实例：\(names)。请先退出或点击“优雅退出并启动”。",
-                        zhHant: "偵測到正在執行的執行個體：\(names)。請先結束或點擊「優雅結束並啟動」。",
-                        en: "Running instances detected: \(names). Quit them first or click 'Quit & Launch'.",
-                        ru: "Обнаружены запущенные процессы: \(names). Закройте их или нажмите «Закрыть и запуск».",
+                        zhHans: "检测到正在运行的实例：\(names)。请先手动退出，或点击主按钮重启。",
+                        zhHant: "偵測到正在執行的執行個體：\(names)。請先手動結束，或點擊主按鈕重新啟動。",
+                        en: "Running instances detected: \(names). Quit them first or use the primary button to restart.",
+                        ru: "Обнаружены запущенные процессы: \(names). Закройте их или используйте главную кнопку для перезапуска.",
                         lang
                     ))
                 }
@@ -1841,10 +1908,11 @@ final class AppModel: ObservableObject {
                 }
             }
 
-            status = outcome == .fastHotUpdated
+            let doneMessage = outcome == .fastHotUpdated
                 ? L10n.t("已热更新配置并启动", "Hot-updated config & launched", lang)
                 : L10n.t("已重建副本并启动", "Rebuilt runtime & launched", lang)
-            bannerSuccessMessage = status
+            status = doneMessage
+            showSuccessFeedback(doneMessage)
             SystemNotificationService.shared.requestAuthorizationIfNeeded()
             if case .updateAvailable = mcpPluginStatus {
                 let ver = appVersionText
@@ -1861,7 +1929,7 @@ final class AppModel: ObservableObject {
                 onLaunchComplete?()
             }
         } catch {
-            errorMessage = error.localizedDescription
+            showErrorFeedback(error.localizedDescription)
             status = L10n.t("准备就绪", "Ready", lang)
             isWorking = false
             refreshRunningInstances()
@@ -1873,11 +1941,11 @@ final class AppModel: ObservableObject {
         let lang = config.appLanguage
         let runtime = support.runtimeApp
         guard FileManager.default.fileExists(atPath: runtime.path) else {
-            errorMessage = L10n.t(
+            showErrorFeedback(L10n.t(
                 "尚未生成代理副本，请先在「代理概览」中保存并启动。",
                 "Runtime copy not built yet. Save & launch from Proxy Overview first.",
                 lang
-            )
+            ))
             return
         }
         let configuration = NSWorkspace.OpenConfiguration()
@@ -1885,13 +1953,13 @@ final class AppModel: ObservableObject {
         NSWorkspace.shared.openApplication(at: runtime, configuration: configuration) { [weak self] _, error in
             if let error {
                 DispatchQueue.main.async {
-                    self?.errorMessage = L10n.t(
+                    self?.showErrorFeedback(L10n.t(
                         zhHans: "启动失败：\(error.localizedDescription)",
                         zhHant: "啟動失敗：\(error.localizedDescription)",
                         en: "Launch failed: \(error.localizedDescription)",
                         ru: "Ошибка запуска: \(error.localizedDescription)",
                         lang
-                    )
+                    ))
                 }
             }
         }

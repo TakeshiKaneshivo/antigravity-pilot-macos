@@ -39,12 +39,6 @@ struct InAppPluginView: View {
                 .fixedSize(horizontal: false, vertical: true)
 
                 techInfoCard
-
-                if let error = appModel.errorMessage {
-                    feedbackBanner(error, isError: true)
-                } else if let success = appModel.bannerSuccessMessage {
-                    feedbackBanner(success, isError: false)
-                }
             }
             .padding(.horizontal, 22)
             .padding(.vertical, 16)
@@ -274,21 +268,6 @@ struct InAppPluginView: View {
             }
         case .unavailable:
             EmptyView()
-        }
-    }
-
-    private func feedbackBanner(_ message: String, isError: Bool) -> some View {
-        let color: Color = isError ? .red : .green
-        return PilotCard(padding: 11, accentTint: color) {
-            HStack(alignment: .top, spacing: 8) {
-                Image(systemName: isError ? "exclamationmark.octagon.fill" : "checkmark.circle.fill")
-                    .foregroundStyle(color)
-                    .padding(.top, 1)
-                Text(message)
-                    .font(.footnote)
-                    .foregroundStyle(color)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
         }
     }
 }

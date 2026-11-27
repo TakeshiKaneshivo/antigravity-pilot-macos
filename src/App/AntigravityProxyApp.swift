@@ -241,6 +241,7 @@ final class BuilderAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
         NSApp.setActivationPolicy(.regular)
         statusBarController?.closePopover()
         monitorStore.setInteractiveVisible(true)
+        appModel.clearSuccessFeedbackIfNeeded()
         appModel.refreshRuntimeStatus()
         appModel.refreshRunningInstances()
 
@@ -356,6 +357,7 @@ final class StatusBarController: NSObject, NSPopoverDelegate, NSMenuDelegate {
             if let button = item.button {
                 button.image = Self.makeStatusBarImage()
                 button.imagePosition = .imageLeading
+                button.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium)
                 button.target = self
                 button.action = #selector(handleStatusButtonClick(_:))
                 button.sendAction(on: [.leftMouseDown, .rightMouseUp])
@@ -1548,9 +1550,15 @@ enum SmokeTestRunner {
             )
 
             let iconPNGURL = URL(fileURLWithPath: resPath).appendingPathComponent("icon.png")
-            if let iconData = try? Data(contentsOf: iconPNGURL) {
+            let launcherResURL = URL(fileURLWithPath: resPath).appendingPathComponent("AntigravityProxyLauncher")
+            let dylibResURL = URL(fileURLWithPath: resPath).appendingPathComponent("libantigravity_proxy.dylib")
+            if let iconData = try? Data(contentsOf: iconPNGURL),
+               let launcherData = try? Data(contentsOf: launcherResURL),
+               let dylibData = try? Data(contentsOf: dylibResURL) {
                 let iconSHA = SHA256.hash(data: iconData).map { String(format: "%02x", $0) }.joined()
-                try? "AG_SOURCE_VERSION=2.99.0\nAG_SOURCE_BUILD=2.99.0\nAG_ICON_STYLE=originalWithBadge\nAG_ICON_SOURCE_SHA256=\(iconSHA)\n".write(
+                let launcherSHA = SHA256.hash(data: launcherData).map { String(format: "%02x", $0) }.joined()
+                let dylibSHA = SHA256.hash(data: dylibData).map { String(format: "%02x", $0) }.joined()
+                try? "AG_SOURCE_VERSION=2.99.0\nAG_SOURCE_BUILD=2.99.0\nAG_ICON_STYLE=originalWithBadge\nAG_ICON_SOURCE_SHA256=\(iconSHA)\nAG_LAUNCHER_SOURCE_SHA256=\(launcherSHA)\nAG_DYLIB_SOURCE_SHA256=\(dylibSHA)\n".write(
                     to: mockRuntimeRes.appendingPathComponent("proxy.env"),
                     atomically: true,
                     encoding: .utf8
@@ -1559,6 +1567,48 @@ enum SmokeTestRunner {
                 check(
                     matchingShaEval != .pilotIconUpdated && matchingShaEval != .iconStyleChanged,
                     "RuntimeBuilder.evaluateHotUpdate does not false-trigger icon rebuild when style & icon SHA match"
+                )
+
+                // Simulate codesign modifying LC_CODE_SIGNATURE bytes on runtime launcher/dylib while pre-sign source hashes match
+                let mockSignedPlist: [String: Any] = [
+                    "CFBundleIdentifier": "com.google.antigravity.pilot.runtime",
+                    "CFBundleExecutable": "AntigravityProxyLauncher",
+                    "CFBundleIconFile": "antigravity-pilot.icns"
+                ]
+                if let plistData = try? PropertyListSerialization.data(fromPropertyList: mockSignedPlist, format: .xml, options: 0) {
+                    try? plistData.write(to: mockRuntime.appendingPathComponent("Contents/Info.plist"))
+                }
+                let signDylibProc = Process()
+                signDylibProc.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
+                signDylibProc.arguments = ["--force", "--sign", "-", mockRuntimeRes.appendingPathComponent("libantigravity_proxy.dylib").path]
+                signDylibProc.standardOutput = FileHandle.nullDevice
+                signDylibProc.standardError = FileHandle.nullDevice
+                try? signDylibProc.run()
+                signDylibProc.waitUntilExit()
+
+                let signAppProc = Process()
+                signAppProc.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
+                signAppProc.arguments = ["--force", "--sign", "-", mockRuntime.path]
+                signAppProc.standardOutput = FileHandle.nullDevice
+                signAppProc.standardError = FileHandle.nullDevice
+                try? signAppProc.run()
+                signAppProc.waitUntilExit()
+
+                let signedMatchedEval = RuntimeBuilder.evaluateHotUpdate(config: ProxyConfig.defaultConfig, support: isolatedSupport)
+                check(
+                    signedMatchedEval == .hotUpdateReady,
+                    "RuntimeBuilder.evaluateHotUpdate returns hotUpdateReady after codesign when source hashes match"
+                )
+
+                try? "AG_SOURCE_VERSION=2.99.0\nAG_SOURCE_BUILD=2.99.0\nAG_ICON_STYLE=originalWithBadge\nAG_ICON_SOURCE_SHA256=\(iconSHA)\nAG_LAUNCHER_SOURCE_SHA256=deadbeef\nAG_DYLIB_SOURCE_SHA256=\(dylibSHA)\n".write(
+                    to: mockRuntimeRes.appendingPathComponent("proxy.env"),
+                    atomically: true,
+                    encoding: .utf8
+                )
+                let staleBinaryEval = RuntimeBuilder.evaluateHotUpdate(config: ProxyConfig.defaultConfig, support: isolatedSupport)
+                check(
+                    staleBinaryEval == .proxyBinaryUpdated,
+                    "RuntimeBuilder.evaluateHotUpdate detects changed AG_LAUNCHER_SOURCE_SHA256 as proxyBinaryUpdated"
                 )
             }
 
@@ -2029,13 +2079,14 @@ enum SmokeTestRunner {
 
         // 31. Menu bar metrics formatting & monochrome template arc spinner rendering
         check(
-            MonitorStore.formatMenuBarTitle(runningCount: 0, metricsText: "18K · 47%") == " 18K · 47%"
-                && MonitorStore.formatMenuBarTitle(runningCount: 1, metricsText: "18K · 47%") == " 18K · 47%"
-                && MonitorStore.formatMenuBarTitle(runningCount: 2, metricsText: "117K · 46%") == "2 · 117K · 46%"
+            MonitorStore.formatMenuBarTitle(runningCount: 0, metricsText: "18K 5h47%") == " 18K 5h47%"
+                && MonitorStore.formatMenuBarTitle(runningCount: 1, metricsText: "18K 5h47%") == " 18K 5h47%"
+                && MonitorStore.formatMenuBarTitle(runningCount: 2, metricsText: "117K 7d46%") == "2 117K 7d46%"
+                && MonitorStore.formatMenuBarTitle(runningCount: 10, metricsText: "999K 7d100%") == "10 999K 7d100%"
                 && MonitorStore.formatMenuBarTitle(runningCount: 1, metricsText: nil) == ""
                 && MonitorStore.formatMenuBarTitle(runningCount: 2, metricsText: nil) == "2"
                 && MonitorStore.formatMenuBarTitle(runningCount: 0, metricsText: nil) == "",
-            "MonitorStore.formatMenuBarTitle formats runningCount & metricsText across all states"
+            "MonitorStore.formatMenuBarTitle formats runningCount & metricsText in compact single-line style"
         )
 
         let spinFrame0 = StatusBarController.renderSpinnerStatusBarImage(baseImage: nil, frameIndex: 0)
@@ -2100,19 +2151,28 @@ enum SmokeTestRunner {
         )
 
         check(
-            MonitorStore.formatMetricsText(contextTokens: 18_400, quotaRemainingPercent: 47, includeContext: true, includeQuota: true) == "18K · 47%"
+            MonitorStore.formatMetricsText(contextTokens: 18_400, quotaRemainingPercent: 47, includeContext: true, includeQuota: true) == "18K 47%"
                 && MonitorStore.formatMetricsText(contextTokens: 18_400, quotaRemainingPercent: 47, includeContext: true, includeQuota: false) == "18K"
                 && MonitorStore.formatMetricsText(contextTokens: 18_400, quotaRemainingPercent: 47, includeContext: false, includeQuota: true) == "47%"
                 && MonitorStore.formatMetricsText(contextTokens: 18_400, quotaRemainingPercent: 47, includeContext: false, includeQuota: false) == nil,
             "MonitorStore.formatMetricsText filters context and quota cleanly without stray separators"
         )
 
-        // 33. Weekly 7d quota prefix & localized menu bar hover tooltip
+        // 33. Compact 5h/7d quota prefixes, worst-case title & localized menu bar hover tooltip
+        let worstCaseMetrics = MonitorStore.formatMetricsText(
+            contextTokens: 999_000,
+            quotaRemainingPercent: 100,
+            quotaWindowKind: .weekly,
+            includeContext: true,
+            includeQuota: true
+        )
         check(
-            MonitorStore.formatMetricsText(contextTokens: 18_400, quotaRemainingPercent: 47, quotaWindowKind: .fiveHour, includeContext: true, includeQuota: true) == "18K · 47%"
-                && MonitorStore.formatMetricsText(contextTokens: 18_400, quotaRemainingPercent: 47, quotaWindowKind: .weekly, includeContext: true, includeQuota: true) == "18K · 7d 47%"
-                && MonitorStore.formatMetricsText(contextTokens: 18_400, quotaRemainingPercent: 47, quotaWindowKind: .weekly, includeContext: false, includeQuota: true) == "7d 47%",
-            "MonitorStore.formatMetricsText prefixes 7d only when tightest window is weekly"
+            MonitorStore.formatMetricsText(contextTokens: 18_400, quotaRemainingPercent: 47, quotaWindowKind: .fiveHour, includeContext: true, includeQuota: true) == "18K 5h47%"
+                && MonitorStore.formatMetricsText(contextTokens: 18_400, quotaRemainingPercent: 47, quotaWindowKind: .fiveHour, includeContext: false, includeQuota: true) == "5h47%"
+                && MonitorStore.formatMetricsText(contextTokens: 18_400, quotaRemainingPercent: 47, quotaWindowKind: .weekly, includeContext: true, includeQuota: true) == "18K 7d47%"
+                && MonitorStore.formatMetricsText(contextTokens: 18_400, quotaRemainingPercent: 47, quotaWindowKind: .weekly, includeContext: false, includeQuota: true) == "7d47%"
+                && MonitorStore.formatMenuBarTitle(runningCount: 10, metricsText: worstCaseMetrics) == "10 999K 7d100%",
+            "MonitorStore.formatMetricsText formats unified compact 5h/7d quota prefixes and worst-case multi-agent title"
         )
 
         let tipWeeklyZh = MonitorStore.formatMenuBarTooltip(
