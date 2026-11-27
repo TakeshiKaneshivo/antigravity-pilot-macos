@@ -452,13 +452,16 @@ struct ProxyConfigView: View {
                 }
 
                 Text(L10n.t(
-                    "仅影响代理版 Runtime 副本，伴侣本身保持 Pilot 图标。",
-                    "Applies to the proxied runtime copy only; Pilot keeps its own icon.",
+                    zhHans: "仅影响代理副本，Pilot 本身图标不变。",
+                    zhHant: "僅影響代理副本，Pilot 本身圖示不變。",
+                    en: "Runtime copy only; Pilot keeps its icon.",
+                    ru: "Только для копии; у Pilot свой значок.",
                     lang
                 ))
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
-                .fixedSize(horizontal: false, vertical: true)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
             }
             .frame(maxHeight: .infinity, alignment: .topLeading)
         }
