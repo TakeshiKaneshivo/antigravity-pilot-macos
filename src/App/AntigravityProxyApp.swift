@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import CoreText
 import CryptoKit
 import Darwin
 import SQLite3
@@ -261,9 +262,10 @@ final class BuilderAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
 final class StatusBarController: NSObject, NSPopoverDelegate, NSMenuDelegate {
     nonisolated private static let spinnerFrameCount = 16
     private static let spinnerFrameInterval: TimeInterval = 1.0 / 12.0
-    nonisolated private static let spinnerImageSize = NSSize(width: 32, height: 18)
+    nonisolated static let singleSpinnerImageSize = NSSize(width: 32, height: 18)
+    nonisolated static let badgedSpinnerImageSize = NSSize(width: 36, height: 18)
     private static var cachedBaseIcon: NSImage?
-    private static var cachedSpinnerFrames: [NSImage]?
+    private static var cachedSpinnerFrames: [Int: [NSImage]] = [:]
 
     private let appModel: AppModel
     private let monitorStore: MonitorStore
@@ -278,6 +280,8 @@ final class StatusBarController: NSObject, NSPopoverDelegate, NSMenuDelegate {
     nonisolated(unsafe) private var spinnerTimer: Timer?
     private var spinnerFrameIndex: Int = 0
     private var isShowingSpinner: Bool = false
+    private var activeSpinnerCount: Int = 0
+    private var lastAttributedTitleKey: String?
     nonisolated(unsafe) private var pendingSingleClickWorkItem: DispatchWorkItem?
     nonisolated(unsafe) private var globalPopoverMonitor: Any?
     nonisolated(unsafe) private var localPopoverMonitor: Any?
@@ -343,6 +347,8 @@ final class StatusBarController: NSObject, NSPopoverDelegate, NSMenuDelegate {
         if !appModel.config.enableMenuBarMonitor {
             stopSpinnerTimer()
             isShowingSpinner = false
+            activeSpinnerCount = 0
+            lastAttributedTitleKey = nil
             cancelPendingSingleClick()
             closePopover()
             if let item = statusItem {
@@ -363,48 +369,108 @@ final class StatusBarController: NSObject, NSPopoverDelegate, NSMenuDelegate {
                 button.sendAction(on: [.leftMouseDown, .rightMouseUp])
             }
             statusItem = item
+            lastAttributedTitleKey = nil
         }
 
         guard let button = statusItem?.button else { return }
         let config = appModel.config
         let isLive = monitorStore.liveHub != nil
         let runningCount = (isLive && config.showMenuBarRunningStatus) ? monitorStore.activeRunningSessionCount : 0
-        let metricsText = isLive
-            ? monitorStore.compactMetricsText(
+        let contextTokens = isLive ? monitorStore.activeContext?.activeContextTokens : nil
+        let quotaPercent = isLive ? monitorStore.primaryQuotaPool?.remainingPercent : nil
+        let quotaWindowKind = isLive ? (monitorStore.primaryQuotaPool?.tightestWindowKind ?? .unknown) : .unknown
+        let targetAttributedTitle = isLive
+            ? Self.makeMenuBarAttributedTitle(
+                contextTokens: contextTokens,
+                quotaRemainingPercent: quotaPercent,
+                quotaWindowKind: quotaWindowKind,
                 includeContext: config.showMenuBarContextUsage,
                 includeQuota: config.showMenuBarQuotaPercent
             )
-            : nil
-        let shouldShowSpinner = runningCount > 0
-        let targetTitle = isLive
-            ? MonitorStore.formatMenuBarTitle(runningCount: runningCount, metricsText: metricsText)
-            : ""
+            : NSAttributedString(string: "")
+        let titleKey = "\(isLive)|\(targetAttributedTitle.string)|\(quotaWindowKind.rawValue)"
 
-        if button.title != targetTitle {
-            button.title = targetTitle
-        }
-        if !targetTitle.isEmpty {
-            button.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium)
+        if lastAttributedTitleKey != titleKey {
+            button.attributedTitle = targetAttributedTitle
+            lastAttributedTitleKey = titleKey
         }
         let targetTooltip = monitorStore.menuBarTooltip(lang: config.appLanguage)
         if button.toolTip != targetTooltip {
             button.toolTip = targetTooltip
         }
 
+        let shouldShowSpinner = runningCount > 0
+        let badgeKey = Self.normalizedSpinnerBadgeKey(for: runningCount)
         if shouldShowSpinner {
-            if !isShowingSpinner {
+            if !isShowingSpinner || activeSpinnerCount != badgeKey {
+                if !isShowingSpinner {
+                    spinnerFrameIndex = 0
+                }
                 isShowingSpinner = true
-                spinnerFrameIndex = 0
-                button.image = Self.spinnerStatusBarImage(frameIndex: 0)
+                activeSpinnerCount = badgeKey
+                button.image = Self.spinnerStatusBarImage(frameIndex: spinnerFrameIndex, runningCount: runningCount)
             }
             startSpinnerTimerIfNeeded()
         } else {
             stopSpinnerTimer()
             if isShowingSpinner || button.image == nil {
                 isShowingSpinner = false
+                activeSpinnerCount = 0
                 button.image = Self.makeStatusBarImage()
             }
         }
+    }
+
+    nonisolated static func makeMenuBarAttributedTitle(
+        contextTokens: Int?,
+        quotaRemainingPercent: Int?,
+        quotaWindowKind: QuotaWindowKind,
+        includeContext: Bool,
+        includeQuota: Bool
+    ) -> NSAttributedString {
+        let contextText = (includeContext ? contextTokens : nil).map { TokenFormatting.compactTokensShort($0) }
+        let quotaPct = includeQuota ? quotaRemainingPercent : nil
+        guard contextText != nil || quotaPct != nil else {
+            return NSAttributedString(string: "")
+        }
+
+        let mainFont = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium)
+        let prefixFont = NSFont.monospacedDigitSystemFont(ofSize: 10.5, weight: .medium)
+        let result = NSMutableAttributedString(string: " ", attributes: [.font: mainFont])
+
+        if let contextText {
+            result.append(NSAttributedString(string: contextText, attributes: [.font: mainFont]))
+        }
+        if contextText != nil && quotaPct != nil {
+            result.append(NSAttributedString(
+                string: "\u{2009}·\u{2009}",
+                attributes: [.font: mainFont, .foregroundColor: NSColor.tertiaryLabelColor]
+            ))
+        }
+        if let pct = quotaPct {
+            switch quotaWindowKind {
+            case .fiveHour:
+                result.append(NSAttributedString(
+                    string: "5h ",
+                    attributes: [.font: prefixFont, .foregroundColor: NSColor.secondaryLabelColor]
+                ))
+            case .weekly:
+                result.append(NSAttributedString(
+                    string: "7d ",
+                    attributes: [.font: prefixFont, .foregroundColor: NSColor.secondaryLabelColor]
+                ))
+            case .unknown:
+                break
+            }
+            result.append(NSAttributedString(string: "\(pct)%", attributes: [.font: mainFont]))
+        }
+        return result
+    }
+
+    nonisolated private static func normalizedSpinnerBadgeKey(for runningCount: Int) -> Int {
+        if runningCount <= 1 { return 0 }
+        if runningCount >= 10 { return 10 }
+        return runningCount
     }
 
     private static func makeStatusBarImage() -> NSImage? {
@@ -424,28 +490,30 @@ final class StatusBarController: NSObject, NSPopoverDelegate, NSMenuDelegate {
         return image
     }
 
-    private static func spinnerStatusBarImage(frameIndex: Int) -> NSImage {
-        if let frames = cachedSpinnerFrames, !frames.isEmpty {
+    private static func spinnerStatusBarImage(frameIndex: Int, runningCount: Int = 1) -> NSImage {
+        let badgeKey = normalizedSpinnerBadgeKey(for: runningCount)
+        if let frames = cachedSpinnerFrames[badgeKey], !frames.isEmpty {
             let normalized = ((frameIndex % frames.count) + frames.count) % frames.count
             return frames[normalized]
         }
         let base = makeStatusBarImage()
         let frames = (0..<spinnerFrameCount).map { idx in
-            renderSpinnerStatusBarImage(baseImage: base, frameIndex: idx)
+            renderSpinnerStatusBarImage(baseImage: base, frameIndex: idx, runningCount: runningCount)
         }
-        cachedSpinnerFrames = frames
+        cachedSpinnerFrames[badgeKey] = frames
         let normalized = ((frameIndex % frames.count) + frames.count) % frames.count
         return frames[normalized]
     }
 
-    nonisolated static func renderSpinnerStatusBarImage(baseImage: NSImage?, frameIndex: Int) -> NSImage {
-        let size = spinnerImageSize
+    nonisolated static func renderSpinnerStatusBarImage(baseImage: NSImage?, frameIndex: Int, runningCount: Int = 1) -> NSImage {
+        let showBadge = runningCount >= 2
+        let size = showBadge ? badgedSpinnerImageSize : singleSpinnerImageSize
         let out = NSImage(size: size)
         let normalized = ((frameIndex % spinnerFrameCount) + spinnerFrameCount) % spinnerFrameCount
         let startAngle = CGFloat.pi / 2 - CGFloat(normalized) * (2 * CGFloat.pi / CGFloat(spinnerFrameCount))
         let sweep = CGFloat(240.0 * .pi / 180.0)
-        let center = CGPoint(x: 27.0, y: 9.0)
-        let radius: CGFloat = 3.85
+        let center = showBadge ? CGPoint(x: 28.0, y: 9.0) : CGPoint(x: 26.5, y: 9.0)
+        let radius: CGFloat = showBadge ? 6.0 : 4.0
 
         for scale in [2, 3] {
             let pxW = Int(size.width) * scale
@@ -480,12 +548,12 @@ final class StatusBarController: NSObject, NSPopoverDelegate, NSMenuDelegate {
                 )
             }
 
-            cg.setLineWidth(1.15)
-            cg.setStrokeColor(NSColor.black.withAlphaComponent(0.20).cgColor)
+            cg.setLineWidth(showBadge ? 1.1 : 1.15)
+            cg.setStrokeColor(NSColor.black.withAlphaComponent(0.22).cgColor)
             cg.addArc(center: center, radius: radius, startAngle: 0, endAngle: 2 * CGFloat.pi, clockwise: false)
             cg.strokePath()
 
-            cg.setLineWidth(1.3)
+            cg.setLineWidth(showBadge ? 1.25 : 1.3)
             cg.setLineCap(.round)
             cg.setStrokeColor(NSColor.black.cgColor)
             cg.addArc(
@@ -496,6 +564,21 @@ final class StatusBarController: NSObject, NSPopoverDelegate, NSMenuDelegate {
                 clockwise: true
             )
             cg.strokePath()
+
+            if showBadge {
+                let badgeText = runningCount >= 10 ? "9+" : "\(runningCount)"
+                let fontSize: CGFloat = runningCount >= 10 ? 7.0 : 8.5
+                let font = NSFont.monospacedDigitSystemFont(ofSize: fontSize, weight: .bold)
+                let attr = NSAttributedString(
+                    string: badgeText,
+                    attributes: [.font: font, .foregroundColor: NSColor.black]
+                )
+                let line = CTLineCreateWithAttributedString(attr)
+                let bounds = CTLineGetBoundsWithOptions(line, .useGlyphPathBounds)
+                cg.textMatrix = .identity
+                cg.textPosition = CGPoint(x: center.x - bounds.midX, y: center.y - bounds.midY)
+                CTLineDraw(line, cg)
+            }
 
             NSGraphicsContext.restoreGraphicsState()
             out.addRepresentation(rep)
@@ -513,7 +596,10 @@ final class StatusBarController: NSObject, NSPopoverDelegate, NSMenuDelegate {
             Task { @MainActor [weak self] in
                 guard let self, self.isShowingSpinner, let button = self.statusItem?.button else { return }
                 self.spinnerFrameIndex = (self.spinnerFrameIndex + 1) % Self.spinnerFrameCount
-                button.image = Self.spinnerStatusBarImage(frameIndex: self.spinnerFrameIndex)
+                button.image = Self.spinnerStatusBarImage(
+                    frameIndex: self.spinnerFrameIndex,
+                    runningCount: self.activeSpinnerCount
+                )
             }
         }
         timer.tolerance = 0.02
@@ -2077,39 +2163,90 @@ enum SmokeTestRunner {
             "MonitorStore adaptive polling (5s/10s/30s) & selectBestHubCandidate ranking behave as expected"
         )
 
-        // 31. Menu bar metrics formatting & monochrome template arc spinner rendering
+        // 31. Menu bar metrics formatting, badged arc spinner rendering & attributedTitle styling
         check(
-            MonitorStore.formatMenuBarTitle(runningCount: 0, metricsText: "18K 5h47%") == " 18K 5h47%"
-                && MonitorStore.formatMenuBarTitle(runningCount: 1, metricsText: "18K 5h47%") == " 18K 5h47%"
-                && MonitorStore.formatMenuBarTitle(runningCount: 2, metricsText: "117K 7d46%") == "2 117K 7d46%"
-                && MonitorStore.formatMenuBarTitle(runningCount: 10, metricsText: "999K 7d100%") == "10 999K 7d100%"
+            MonitorStore.formatMenuBarTitle(runningCount: 0, metricsText: "18K · 5h 47%") == " 18K · 5h 47%"
+                && MonitorStore.formatMenuBarTitle(runningCount: 1, metricsText: "18K · 5h 47%") == " 18K · 5h 47%"
+                && MonitorStore.formatMenuBarTitle(runningCount: 2, metricsText: "117K · 7d 46%") == " 117K · 7d 46%"
                 && MonitorStore.formatMenuBarTitle(runningCount: 1, metricsText: nil) == ""
-                && MonitorStore.formatMenuBarTitle(runningCount: 2, metricsText: nil) == "2"
+                && MonitorStore.formatMenuBarTitle(runningCount: 2, metricsText: nil) == ""
                 && MonitorStore.formatMenuBarTitle(runningCount: 0, metricsText: nil) == "",
-            "MonitorStore.formatMenuBarTitle formats runningCount & metricsText in compact single-line style"
+            "MonitorStore.formatMenuBarTitle formats metricsText cleanly without duplicate runningCount"
         )
 
-        let spinFrame0 = StatusBarController.renderSpinnerStatusBarImage(baseImage: nil, frameIndex: 0)
-        let spinFrame4 = StatusBarController.renderSpinnerStatusBarImage(baseImage: nil, frameIndex: 4)
+        let spinFrame0 = StatusBarController.renderSpinnerStatusBarImage(baseImage: nil, frameIndex: 0, runningCount: 1)
+        let spinFrame4 = StatusBarController.renderSpinnerStatusBarImage(baseImage: nil, frameIndex: 4, runningCount: 1)
+        let spinBadge2 = StatusBarController.renderSpinnerStatusBarImage(baseImage: nil, frameIndex: 0, runningCount: 2)
+        let spinBadge10 = StatusBarController.renderSpinnerStatusBarImage(baseImage: nil, frameIndex: 0, runningCount: 10)
         let reps0 = spinFrame0.representations.compactMap { $0 as? NSBitmapImageRep }
         let reps4 = spinFrame4.representations.compactMap { $0 as? NSBitmapImageRep }
+        let reps2 = spinBadge2.representations.compactMap { $0 as? NSBitmapImageRep }
+        let reps10 = spinBadge10.representations.compactMap { $0 as? NSBitmapImageRep }
         let has2xAnd3x0 = reps0.contains { $0.pixelsWide == 64 && $0.pixelsHigh == 36 }
             && reps0.contains { $0.pixelsWide == 96 && $0.pixelsHigh == 54 }
         let has2xAnd3x4 = reps4.contains { $0.pixelsWide == 64 && $0.pixelsHigh == 36 }
             && reps4.contains { $0.pixelsWide == 96 && $0.pixelsHigh == 54 }
+        let has2xAnd3xBadge2 = reps2.contains { $0.pixelsWide == 72 && $0.pixelsHigh == 36 }
+            && reps2.contains { $0.pixelsWide == 108 && $0.pixelsHigh == 54 }
         let tiff0 = reps0.first(where: { $0.pixelsWide == 64 })?.tiffRepresentation
         let tiff4 = reps4.first(where: { $0.pixelsWide == 64 })?.tiffRepresentation
+        let tiff2 = reps2.first(where: { $0.pixelsWide == 72 })?.tiffRepresentation
+        let tiff10 = reps10.first(where: { $0.pixelsWide == 72 })?.tiffRepresentation
         check(
             spinFrame0.isTemplate
                 && spinFrame4.isTemplate
+                && spinBadge2.isTemplate
+                && spinBadge10.isTemplate
                 && spinFrame0.size == NSSize(width: 32, height: 18)
                 && spinFrame4.size == NSSize(width: 32, height: 18)
+                && spinBadge2.size == NSSize(width: 36, height: 18)
+                && spinBadge10.size == NSSize(width: 36, height: 18)
                 && has2xAnd3x0
                 && has2xAnd3x4
+                && has2xAnd3xBadge2
                 && tiff0 != nil
                 && tiff4 != nil
-                && tiff0 != tiff4,
-            "StatusBarController renders 2x/3x monochrome template arc spinner with rotating frames"
+                && tiff2 != nil
+                && tiff10 != nil
+                && tiff0 != tiff4
+                && tiff2 != tiff10,
+            "StatusBarController renders 2x/3x monochrome template arc spinner with rotating frames and embedded agent count badge"
+        )
+
+        let attrWeekly = StatusBarController.makeMenuBarAttributedTitle(
+            contextTokens: 148_000,
+            quotaRemainingPercent: 39,
+            quotaWindowKind: .weekly,
+            includeContext: true,
+            includeQuota: true
+        )
+        let attrFiveHour = StatusBarController.makeMenuBarAttributedTitle(
+            contextTokens: 148_000,
+            quotaRemainingPercent: 39,
+            quotaWindowKind: .fiveHour,
+            includeContext: true,
+            includeQuota: true
+        )
+        let attrQuotaOnly = StatusBarController.makeMenuBarAttributedTitle(
+            contextTokens: 148_000,
+            quotaRemainingPercent: 39,
+            quotaWindowKind: .weekly,
+            includeContext: false,
+            includeQuota: true
+        )
+        let attrEmpty = StatusBarController.makeMenuBarAttributedTitle(
+            contextTokens: 148_000,
+            quotaRemainingPercent: 39,
+            quotaWindowKind: .weekly,
+            includeContext: false,
+            includeQuota: false
+        )
+        check(
+            attrWeekly.string == " 148K\u{2009}·\u{2009}7d 39%"
+                && attrFiveHour.string == " 148K\u{2009}·\u{2009}5h 39%"
+                && attrQuotaOnly.string == " 7d 39%"
+                && attrEmpty.string == "",
+            "StatusBarController.makeMenuBarAttributedTitle formats hierarchical 148K · 7d 39% / 5h 39% strings"
         )
 
         // 32. Granular menu bar display flags, legacy migration & filtered metrics formatting
@@ -2151,14 +2288,14 @@ enum SmokeTestRunner {
         )
 
         check(
-            MonitorStore.formatMetricsText(contextTokens: 18_400, quotaRemainingPercent: 47, includeContext: true, includeQuota: true) == "18K 47%"
+            MonitorStore.formatMetricsText(contextTokens: 18_400, quotaRemainingPercent: 47, includeContext: true, includeQuota: true) == "18K · 47%"
                 && MonitorStore.formatMetricsText(contextTokens: 18_400, quotaRemainingPercent: 47, includeContext: true, includeQuota: false) == "18K"
                 && MonitorStore.formatMetricsText(contextTokens: 18_400, quotaRemainingPercent: 47, includeContext: false, includeQuota: true) == "47%"
                 && MonitorStore.formatMetricsText(contextTokens: 18_400, quotaRemainingPercent: 47, includeContext: false, includeQuota: false) == nil,
             "MonitorStore.formatMetricsText filters context and quota cleanly without stray separators"
         )
 
-        // 33. Compact 5h/7d quota prefixes, worst-case title & localized menu bar hover tooltip
+        // 33. Unified 5h/7d quota prefixes, worst-case metrics & localized menu bar hover tooltip
         let worstCaseMetrics = MonitorStore.formatMetricsText(
             contextTokens: 999_000,
             quotaRemainingPercent: 100,
@@ -2167,12 +2304,12 @@ enum SmokeTestRunner {
             includeQuota: true
         )
         check(
-            MonitorStore.formatMetricsText(contextTokens: 18_400, quotaRemainingPercent: 47, quotaWindowKind: .fiveHour, includeContext: true, includeQuota: true) == "18K 5h47%"
-                && MonitorStore.formatMetricsText(contextTokens: 18_400, quotaRemainingPercent: 47, quotaWindowKind: .fiveHour, includeContext: false, includeQuota: true) == "5h47%"
-                && MonitorStore.formatMetricsText(contextTokens: 18_400, quotaRemainingPercent: 47, quotaWindowKind: .weekly, includeContext: true, includeQuota: true) == "18K 7d47%"
-                && MonitorStore.formatMetricsText(contextTokens: 18_400, quotaRemainingPercent: 47, quotaWindowKind: .weekly, includeContext: false, includeQuota: true) == "7d47%"
-                && MonitorStore.formatMenuBarTitle(runningCount: 10, metricsText: worstCaseMetrics) == "10 999K 7d100%",
-            "MonitorStore.formatMetricsText formats unified compact 5h/7d quota prefixes and worst-case multi-agent title"
+            MonitorStore.formatMetricsText(contextTokens: 18_400, quotaRemainingPercent: 47, quotaWindowKind: .fiveHour, includeContext: true, includeQuota: true) == "18K · 5h 47%"
+                && MonitorStore.formatMetricsText(contextTokens: 18_400, quotaRemainingPercent: 47, quotaWindowKind: .fiveHour, includeContext: false, includeQuota: true) == "5h 47%"
+                && MonitorStore.formatMetricsText(contextTokens: 18_400, quotaRemainingPercent: 47, quotaWindowKind: .weekly, includeContext: true, includeQuota: true) == "18K · 7d 47%"
+                && MonitorStore.formatMetricsText(contextTokens: 18_400, quotaRemainingPercent: 47, quotaWindowKind: .weekly, includeContext: false, includeQuota: true) == "7d 47%"
+                && worstCaseMetrics == "999K · 7d 100%",
+            "MonitorStore.formatMetricsText formats unified 5h/7d quota prefixes with middle-dot separator"
         )
 
         let tipWeeklyZh = MonitorStore.formatMenuBarTooltip(

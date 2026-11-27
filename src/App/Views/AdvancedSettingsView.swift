@@ -275,11 +275,11 @@ struct AdvancedSettingsView: View {
             parts.append("148K")
         }
         if appModel.config.showMenuBarQuotaPercent {
-            parts.append("5h39%")
+            parts.append("5h 39%")
         }
-        let metrics = parts.joined(separator: " ")
+        let metrics = parts.joined(separator: " · ")
         if appModel.config.showMenuBarRunningStatus {
-            return metrics.isEmpty ? "◌2" : "◌2 \(metrics)"
+            return metrics.isEmpty ? "②" : "② \(metrics)"
         }
         if !metrics.isEmpty {
             return metrics

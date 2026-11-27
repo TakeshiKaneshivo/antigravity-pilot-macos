@@ -290,18 +290,8 @@ struct MainWindowView: View {
                                     .foregroundStyle(.secondary)
                                     .lineLimit(1)
                             } else if monitorStore.activeRunningSessionCount > 0 {
-                                PilotMiniArcSpinner()
-                                let count = monitorStore.activeRunningSessionCount
-                                let sidebarText: String = {
-                                    if count > 1 {
-                                        if let metrics = monitorStore.compactMetricsText {
-                                            return "\(count) \(metrics)"
-                                        }
-                                        return "\(count)"
-                                    }
-                                    return monitorStore.compactMetricsText ?? L10n.t("运行中", "Running", lang)
-                                }()
-                                Text(sidebarText)
+                                PilotMiniArcSpinner(count: monitorStore.activeRunningSessionCount)
+                                Text(monitorStore.compactMetricsText ?? L10n.t("运行中", "Running", lang))
                                     .font(.caption2)
                                     .fontDesign(.rounded)
                                     .monospacedDigit()
@@ -676,8 +666,13 @@ struct MainWindowView: View {
 }
 
 private struct PilotMiniArcSpinner: View {
+    var count: Int = 1
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isSpinning = false
+
+    private var showBadge: Bool {
+        count > 1
+    }
 
     var body: some View {
         ZStack {
@@ -690,8 +685,14 @@ private struct PilotMiniArcSpinner: View {
                     style: StrokeStyle(lineWidth: 1.25, lineCap: .round)
                 )
                 .rotationEffect(.degrees(isSpinning && !reduceMotion ? 360 : 0))
+            if showBadge {
+                Text(count >= 10 ? "9+" : "\(count)")
+                    .font(.system(size: count >= 10 ? 6.5 : 7.5, weight: .bold, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(.primary)
+            }
         }
-        .frame(width: 9, height: 9)
+        .frame(width: showBadge ? 13 : 9, height: showBadge ? 13 : 9)
         .onAppear {
             startIfNeeded()
         }

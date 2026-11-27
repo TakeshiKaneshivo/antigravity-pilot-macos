@@ -299,14 +299,14 @@ final class MonitorStore: ObservableObject {
         if includeQuota, let pct = quotaRemainingPercent {
             switch quotaWindowKind {
             case .fiveHour:
-                parts.append("5h\(pct)%")
+                parts.append("5h \(pct)%")
             case .weekly:
-                parts.append("7d\(pct)%")
+                parts.append("7d \(pct)%")
             case .unknown:
                 parts.append("\(pct)%")
             }
         }
-        return parts.isEmpty ? nil : parts.joined(separator: " ")
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
     func menuBarTooltip(lang: AppLanguage) -> String {
@@ -400,9 +400,6 @@ final class MonitorStore: ObservableObject {
 
     nonisolated static func formatMenuBarTitle(runningCount: Int, metricsText: String?) -> String {
         let trimmedMetrics = metricsText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if runningCount > 1 {
-            return trimmedMetrics.isEmpty ? "\(runningCount)" : "\(runningCount) \(trimmedMetrics)"
-        }
         return trimmedMetrics.isEmpty ? "" : " \(trimmedMetrics)"
     }
 
