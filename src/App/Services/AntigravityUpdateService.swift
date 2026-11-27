@@ -267,7 +267,7 @@ enum AntigravityUpdateService {
         )
 
         let pilotVersion = (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String)?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? "0.1.0"
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? "0.2.0"
         let candidates = AppUpdateService.candidateSessions(for: feedURL, config: config, timeoutResource: 25)
         var lastError: Error?
 

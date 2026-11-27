@@ -134,7 +134,11 @@ final class SystemNotificationService: NSObject, UNUserNotificationCenterDelegat
         }
     }
 
-    func postRuntimeUpdateNeeded(language: AppLanguage, completion: (@Sendable (Bool) -> Void)? = nil) {
+    func postRuntimeUpdateNeeded(
+        language: AppLanguage,
+        onAuthorizationPromptNeeded: (@Sendable () -> Void)? = nil,
+        completion: (@Sendable (Bool) -> Void)? = nil
+    ) {
         guard Self.isRunningInAppBundle else {
             completion?(false)
             return
@@ -166,6 +170,7 @@ final class SystemNotificationService: NSObject, UNUserNotificationCenterDelegat
             case .authorized, .provisional:
                 enqueueNotification()
             case .notDetermined:
+                onAuthorizationPromptNeeded?()
                 UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, _ in
                     if granted {
                         enqueueNotification()
@@ -198,6 +203,12 @@ final class SystemNotificationService: NSObject, UNUserNotificationCenterDelegat
             self.onOpenMainWindow?()
             completionHandler()
         }
+    }
+
+    @MainActor
+    private final class HeadlessNotificationWaitState {
+        var finished = false
+        var deadline = Date().addingTimeInterval(4.0)
     }
 
     static func runHeadlessRuntimeUpdateNotificationAndExit(arguments: [String]) -> Never {
@@ -234,25 +245,23 @@ final class SystemNotificationService: NSObject, UNUserNotificationCenterDelegat
         let service = SystemNotificationService.shared
         UNUserNotificationCenter.current().delegate = service
 
-        var isNotDetermined = false
-        let settingsSem = DispatchSemaphore(value: 0)
-        UNUserNotificationCenter.current().getNotificationSettings { settings in
-            isNotDetermined = (settings.authorizationStatus == .notDetermined)
-            settingsSem.signal()
-        }
-        _ = settingsSem.wait(timeout: .now() + 1.0)
+        let waitState = HeadlessNotificationWaitState()
 
-        var finished = false
-        let deadline = Date().addingTimeInterval(isNotDetermined ? 20.0 : 4.0)
-
-        service.postRuntimeUpdateNeeded(language: resolvedLang) { delivered in
+        service.postRuntimeUpdateNeeded(
+            language: resolvedLang,
+            onAuthorizationPromptNeeded: {
+                DispatchQueue.main.async {
+                    waitState.deadline = max(waitState.deadline, Date().addingTimeInterval(20.0))
+                }
+            }
+        ) { delivered in
             let flushDelay: TimeInterval = delivered ? 0.35 : 0.05
             DispatchQueue.main.asyncAfter(deadline: .now() + flushDelay) {
-                finished = true
+                waitState.finished = true
             }
         }
 
-        while !finished && Date() < deadline {
+        while !waitState.finished && Date() < waitState.deadline {
             RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.05))
         }
 

@@ -187,10 +187,13 @@ struct MonitorDashboardView: View {
                             }
                             return base
                         }()
+                        let validPinnedSelection = monitorStore.pinnedCascadeId.flatMap { pid in
+                            displayedSessions.contains(where: { $0.id == pid }) ? pid : nil
+                        } ?? ""
                         Picker(
                             "",
                             selection: Binding(
-                                get: { monitorStore.pinnedCascadeId ?? "" },
+                                get: { validPinnedSelection },
                                 set: { monitorStore.selectSession($0.isEmpty ? nil : $0) }
                             )
                         ) {

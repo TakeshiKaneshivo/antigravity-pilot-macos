@@ -560,8 +560,10 @@ struct MainWindowView: View {
                     lang
                 ))
                 helpBullet(L10n.t(
-                    "零入侵原版应用：/Applications/Antigravity.app 始终保持只读不改动；开启顶部菜单栏图标时，关闭本窗口后监控缩入菜单栏。",
-                    "Non-invasive: /Applications/Antigravity.app remains untouched; when the menu bar icon is enabled, closing this window minimizes monitoring to the menu bar.",
+                    zhHans: "零注入原版应用：/Applications/Antigravity.app 平时保持只读不改动，仅在点击「一键更新原版并重建」时以 Google 官方签名包原子更新；开启顶部菜单栏图标时，关闭本窗口后监控缩入菜单栏。",
+                    zhHant: "零注入原版應用：/Applications/Antigravity.app 平時保持唯讀不改動，僅在點擊「一鍵更新原版並重建」時以 Google 官方簽署套件原子更新；開啟頂部選單列圖示時，關閉本視窗後監控縮入選單列。",
+                    en: "Zero-injection source: /Applications/Antigravity.app stays read-only unless you click Update & Rebuild (atomic Google-signed upgrade); when the menu bar icon is enabled, closing this window minimizes monitoring to the menu bar.",
+                    ru: "Без вмешательства в оригинал: /Applications/Antigravity.app не изменяется без вашего нажатия «Обновить и пересобрать»; при включённой иконке в меню закрытие окна сворачивает Pilot туда.",
                     lang
                 ))
             }

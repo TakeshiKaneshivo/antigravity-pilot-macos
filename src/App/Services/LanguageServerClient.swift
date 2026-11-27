@@ -556,7 +556,7 @@ final class LanguageServerClient {
         let resp: GetAllTrajectoriesResponse = try await callRPC("GetAllCascadeTrajectories", body: EmptyRequest(), hub: hub)
         let rawMap = resp.trajectorySummaries ?? [:]
 
-        var parsed: [SessionSummary] = rawMap.map { (cid, summary) in
+        let parsed: [SessionSummary] = rawMap.map { (cid, summary) in
             let workspaces = summary.workspaces ?? summary.trajectoryMetadata?.workspaces ?? []
             let firstWs = workspaces.first
             let repoName = firstWs?.repository?.computedName?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -593,29 +593,73 @@ final class LanguageServerClient {
             )
         }
 
-        // Order root sessions by lastModifiedTime descending, placing nested subagents below their root/parent
-        parsed.sort { ($0.lastModifiedTime ?? .distantPast) > ($1.lastModifiedTime ?? .distantPast) }
-        var byRoot: [String: [SessionSummary]] = [:]
+        return Self.orderSessionsHierarchically(parsed)
+    }
+
+    static func orderSessionsHierarchically(_ parsed: [SessionSummary]) -> [SessionSummary] {
+        // Order root sessions by lastModifiedTime descending, flattening arbitrarily nested subagents via DFS.
+        let sorted = parsed.sorted { ($0.lastModifiedTime ?? .distantPast) > ($1.lastModifiedTime ?? .distantPast) }
+        let idSet = Set(sorted.map(\.id))
+
         var roots: [SessionSummary] = []
-        let idSet = Set(parsed.map(\.id))
-        for item in parsed {
-            let anchorId = [item.rootConversationId, item.parentConversationId]
-                .compactMap { $0 }
-                .first { !$0.isEmpty && $0 != item.id && idSet.contains($0) }
-            if let anchorId {
-                byRoot[anchorId, default: []].append(item)
+        var childrenByParent: [String: [SessionSummary]] = [:]
+
+        for item in sorted {
+            let parentKey: String? = {
+                if let pid = item.parentConversationId, !pid.isEmpty, pid != item.id, idSet.contains(pid) {
+                    return pid
+                }
+                if let rid = item.rootConversationId, !rid.isEmpty, rid != item.id, idSet.contains(rid) {
+                    return rid
+                }
+                return nil
+            }()
+
+            if let parentKey {
+                childrenByParent[parentKey, default: []].append(item)
             } else {
                 roots.append(item)
             }
         }
 
         var ordered: [SessionSummary] = []
-        ordered.reserveCapacity(parsed.count)
-        for root in roots {
-            ordered.append(root)
-            if let children = byRoot[root.id] {
-                ordered.append(contentsOf: children)
+        ordered.reserveCapacity(sorted.count)
+        var visited = Set<String>()
+
+        func visit(_ session: SessionSummary, depth: Int) {
+            guard visited.insert(session.id).inserted else { return }
+            let effectiveDepth = max(session.nestingDepth, depth)
+            let normalized: SessionSummary
+            if effectiveDepth != session.nestingDepth {
+                normalized = SessionSummary(
+                    id: session.id,
+                    title: session.title,
+                    stepCount: session.stepCount,
+                    lastModifiedTime: session.lastModifiedTime,
+                    status: session.status,
+                    workspaceName: session.workspaceName,
+                    workspacePath: session.workspacePath,
+                    branchName: session.branchName,
+                    parentConversationId: session.parentConversationId,
+                    rootConversationId: session.rootConversationId,
+                    nestingDepth: effectiveDepth,
+                    agentRole: session.agentRole
+                )
+            } else {
+                normalized = session
             }
+            ordered.append(normalized)
+            for child in childrenByParent[session.id] ?? [] {
+                visit(child, depth: effectiveDepth + 1)
+            }
+        }
+
+        for root in roots {
+            visit(root, depth: 0)
+        }
+        // Preserve any cyclic or disconnected nodes rather than dropping them.
+        for item in sorted where !visited.contains(item.id) {
+            visit(item, depth: max(0, item.nestingDepth))
         }
         return ordered
     }

@@ -641,7 +641,7 @@ final class PilotMCPService: MCPServiceHandling, @unchecked Sendable {
 
 func parseArgs() -> (htmlPath: String?, version: String) {
     var htmlPath: String?
-    var version = "0.1.0"
+    var version = "0.2.0"
     let args = CommandLine.arguments
     var idx = 1
     while idx < args.count {

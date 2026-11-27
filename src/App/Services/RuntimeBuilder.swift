@@ -1390,6 +1390,11 @@ final class AppModel: ObservableObject {
     @Published var errorMessage: String?
     @Published var bannerSuccessMessage: String?
     @Published var isWorking = false
+    @Published var isExternalOperationActive = false
+
+    var isAnyOperationBusy: Bool {
+        isWorking || isExternalOperationActive
+    }
 
     let support = AppSupport()
     private var probeGeneration = 0
@@ -1445,7 +1450,7 @@ final class AppModel: ObservableObject {
     }
 
     var appVersionText: String {
-        (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "0.1.0"
+        (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "0.2.0"
     }
 
     func load() {
@@ -1763,7 +1768,7 @@ final class AppModel: ObservableObject {
     }
 
     func saveAndStart(forceRebuild: Bool = false, terminateRunningFirst: Bool = false, onLaunchComplete: (() -> Void)? = nil) {
-        guard !isWorking else { return }
+        guard !isAnyOperationBusy else { return }
         Task {
             await start(forceRebuild: forceRebuild, terminateRunningFirst: terminateRunningFirst, onLaunchComplete: onLaunchComplete)
         }
@@ -1864,6 +1869,7 @@ final class AppModel: ObservableObject {
     }
 
     func launchExistingRuntimeOnly() {
+        guard !isAnyOperationBusy else { return }
         let lang = config.appLanguage
         let runtime = support.runtimeApp
         guard FileManager.default.fileExists(atPath: runtime.path) else {

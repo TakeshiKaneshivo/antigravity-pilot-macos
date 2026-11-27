@@ -13,6 +13,8 @@ final class AntigravityUpdateStore: ObservableObject {
 
     private var checkTask: Task<Void, Never>?
     private var updateTask: Task<Void, Never>?
+    private var updateGeneration = 0
+    private weak var activeAppModel: AppModel?
     private var periodicTimer: Timer?
     private var cachedAvailableState: AntigravityUpdateState?
 
@@ -164,7 +166,7 @@ final class AntigravityUpdateStore: ObservableObject {
     }
 
     func startUpdateAndRebuild(appModel: AppModel, onLaunchComplete: (() -> Void)? = nil) {
-        guard !state.isBusy, !appModel.isWorking else { return }
+        guard !state.isBusy, !appModel.isAnyOperationBusy else { return }
         guard let manifest = state.activeManifest else { return }
 
         let currentConfig = appModel.config
@@ -187,6 +189,10 @@ final class AntigravityUpdateStore: ObservableObject {
         }
 
         updateTask?.cancel()
+        updateGeneration += 1
+        let gen = updateGeneration
+        activeAppModel = appModel
+        appModel.isExternalOperationActive = true
         state = .downloading(
             manifest: manifest,
             downloadedBytes: 0,
@@ -206,6 +212,18 @@ final class AntigravityUpdateStore: ObservableObject {
                 if let stagingRootToClean {
                     try? FileManager.default.removeItem(at: stagingRootToClean)
                 }
+                if self.updateGeneration == gen {
+                    appModel.isExternalOperationActive = false
+                    if self.activeAppModel === appModel {
+                        self.activeAppModel = nil
+                    }
+                }
+            }
+
+            @MainActor func ensureActive() throws {
+                guard !Task.isCancelled, self.updateGeneration == gen else {
+                    throw CancellationError()
+                }
             }
 
             do {
@@ -217,7 +235,7 @@ final class AntigravityUpdateStore: ObservableObject {
                     allowInsecureHTTP: resolvedFeed.allowInsecureHTTP
                 ) { downloaded, total, route in
                     Task { @MainActor [weak self] in
-                        guard let self else { return }
+                        guard let self, self.updateGeneration == gen else { return }
                         if case .downloading = self.state {
                             self.state = .downloading(
                                 manifest: manifest,
@@ -229,7 +247,7 @@ final class AntigravityUpdateStore: ObservableObject {
                     }
                 }
                 activeRoute = downloadRoute
-                try Task.checkCancellation()
+                try ensureActive()
 
                 switch eligibility {
                 case .manualFallbackRequired(let reason):
@@ -253,6 +271,7 @@ final class AntigravityUpdateStore: ObservableObject {
                             lang: lang
                         )
                     }.value
+                    try ensureActive()
 
                     let instances = RunningInstanceManager.detectRunningInstances(support: currentSupport)
                     appModel.runningInstances = instances
@@ -270,6 +289,7 @@ final class AntigravityUpdateStore: ObservableObject {
                                 lang
                             ))
                         }
+                        try ensureActive()
                     }
 
                     self.state = .replacingAndRebuilding(
@@ -288,6 +308,7 @@ final class AntigravityUpdateStore: ObservableObject {
                     try? FileManager.default.removeItem(at: currentSupport.runtimeShipItCacheDirectory)
 
                     appModel.refreshRuntimeStatus()
+                    try ensureActive()
 
                     self.state = .replacingAndRebuilding(
                         manifest: manifest,
@@ -298,7 +319,7 @@ final class AntigravityUpdateStore: ObservableObject {
                             do {
                                 let builder = RuntimeBuilder(config: currentConfig, support: currentSupport) { message in
                                     Task { @MainActor [weak self] in
-                                        guard let self else { return }
+                                        guard let self, self.updateGeneration == gen else { return }
                                         if case .replacingAndRebuilding = self.state {
                                             self.state = .replacingAndRebuilding(manifest: manifest, stage: message)
                                         }
@@ -337,18 +358,25 @@ final class AntigravityUpdateStore: ObservableObject {
                     }
                 }
             } catch is CancellationError {
-                self.state = self.cachedAvailableState ?? .idle
+                if self.updateGeneration == gen {
+                    self.state = self.cachedAvailableState ?? .idle
+                }
             } catch {
-                appModel.refreshRuntimeStatus()
-                appModel.refreshRunningInstances()
-                self.state = .failed(message: error.localizedDescription, canRetry: true)
+                if self.updateGeneration == gen {
+                    appModel.refreshRuntimeStatus()
+                    appModel.refreshRunningInstances()
+                    self.state = .failed(message: error.localizedDescription, canRetry: true)
+                }
             }
         }
     }
 
     func cancelDownload() {
+        updateGeneration += 1
         updateTask?.cancel()
         updateTask = nil
+        activeAppModel?.isExternalOperationActive = false
+        activeAppModel = nil
         state = cachedAvailableState ?? .idle
     }
 

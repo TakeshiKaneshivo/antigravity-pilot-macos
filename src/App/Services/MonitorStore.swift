@@ -28,6 +28,7 @@ final class MonitorStore: ObservableObject {
     private var isInteractiveVisible = true
     private var liveRefreshGeneration = 0
     private var didInitialModelCatalogSync = false
+    private var needsFollowUpHistoryRefresh = false
 
     init(support: AppSupport = AppSupport()) {
         self.support = support
@@ -190,7 +191,7 @@ final class MonitorStore: ObservableObject {
 
                 if !catalog.isEmpty && !self.didInitialModelCatalogSync {
                     self.didInitialModelCatalogSync = true
-                    self.refreshHistory()
+                    self.refreshHistory(queueIfBusy: true)
                 }
 
                 if newRunningCount > 0 {
@@ -216,8 +217,14 @@ final class MonitorStore: ObservableObject {
         }
     }
 
-    func refreshHistory() {
-        guard !isRefreshingHistory else { return }
+    func refreshHistory(queueIfBusy: Bool = false) {
+        if isRefreshingHistory {
+            if queueIfBusy {
+                needsFollowUpHistoryRefresh = true
+            }
+            return
+        }
+        needsFollowUpHistoryRefresh = false
         isRefreshingHistory = true
         let supportCopy = support
         let catalogSnap = modelCatalog
@@ -237,6 +244,10 @@ final class MonitorStore: ObservableObject {
             self.usageHistory = snapshot
             self.lastHistoryScanAt = Date()
             self.isRefreshingHistory = false
+            if self.needsFollowUpHistoryRefresh {
+                self.needsFollowUpHistoryRefresh = false
+                self.refreshHistory()
+            }
         }
     }
 

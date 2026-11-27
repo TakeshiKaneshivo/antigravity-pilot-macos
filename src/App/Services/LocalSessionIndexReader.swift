@@ -72,7 +72,9 @@ enum LocalSessionIndexReader {
                                 agentRole: existing.agentRole
                             )
                             result[scopedKey] = updated
-                            result[cid] = updated
+                            if result[cid] == nil || result[cid]?.clientSource == source {
+                                result[cid] = updated
+                            }
                         }
                     } else if !title.isEmpty {
                         let meta = LocalSessionMetadata(
@@ -130,14 +132,24 @@ enum LocalSessionIndexReader {
         defer { sqlite3_close(db) }
         sqlite3_busy_timeout(db, 400)
 
-        let sql = """
+        let fullSQL = """
         SELECT conversation_id, title, workspace_uris, parent_conversation_id, nesting_depth, agent_name
         FROM conversation_summaries
         """
+        let fallbackSQL = """
+        SELECT conversation_id, title, workspace_uris
+        FROM conversation_summaries
+        """
         var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let stmt else {
+        let hasExtendedColumns: Bool
+        if sqlite3_prepare_v2(db, fullSQL, -1, &stmt, nil) == SQLITE_OK, stmt != nil {
+            hasExtendedColumns = true
+        } else if sqlite3_prepare_v2(db, fallbackSQL, -1, &stmt, nil) == SQLITE_OK, stmt != nil {
+            hasExtendedColumns = false
+        } else {
             return nil
         }
+        guard let stmt else { return nil }
         defer { sqlite3_finalize(stmt) }
 
         var out: [String: LocalSessionMetadata] = [:]
@@ -149,9 +161,13 @@ enum LocalSessionIndexReader {
             guard !cid.isEmpty else { continue }
             let rawTitle = columnString(stmt, index: 1).trimmingCharacters(in: .whitespacesAndNewlines)
             let rawWorkspaces = columnString(stmt, index: 2)
-            let rawParent = columnString(stmt, index: 3).trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            let depth = Int(sqlite3_column_int64(stmt, 4))
-            let rawAgent = columnString(stmt, index: 5).trimmingCharacters(in: .whitespacesAndNewlines)
+            let rawParent = hasExtendedColumns
+                ? columnString(stmt, index: 3).trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                : ""
+            let depth = hasExtendedColumns ? Int(sqlite3_column_int64(stmt, 4)) : 0
+            let rawAgent = hasExtendedColumns
+                ? columnString(stmt, index: 5).trimmingCharacters(in: .whitespacesAndNewlines)
+                : ""
 
             let firstURI = extractFirstWorkspaceURI(from: rawWorkspaces)
             let wsPath = LanguageServerClient.cleanWorkspacePath(from: firstURI)

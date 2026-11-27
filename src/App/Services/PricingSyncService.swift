@@ -3,6 +3,7 @@ import Foundation
 enum PricingSyncService {
     static let upstreamURL = URL(string: "https://raw.githubusercontent.com/yuhuan-dev/antigravity-usage-monitor/main/pricing-catalog.json")!
     static let cooldownSeconds: TimeInterval = 12 * 3600
+    static let failureCooldownSeconds: TimeInterval = 30 * 60
     static let maxPayloadBytes = 1_048_576
 
     struct SyncState: Codable, Equatable {
@@ -26,9 +27,15 @@ enum PricingSyncService {
         }
 
         var state = loadState(from: support.pricingSyncStateURL)
-        if !force, let lastAttempt = state.lastAttemptAt,
-           Date().timeIntervalSince(lastAttempt) < cooldownSeconds {
-            return false
+        if !force {
+            if let lastSuccess = state.lastSuccessAt,
+               Date().timeIntervalSince(lastSuccess) < cooldownSeconds {
+                return false
+            }
+            if let lastAttempt = state.lastAttemptAt,
+               Date().timeIntervalSince(lastAttempt) < failureCooldownSeconds {
+                return false
+            }
         }
 
         state.lastAttemptAt = Date()
@@ -48,6 +55,7 @@ enum PricingSyncService {
                 guard let http = response as? HTTPURLResponse else { continue }
 
                 if http.statusCode == 304 {
+                    state.lastSuccessAt = Date()
                     saveState(state, to: support.pricingSyncStateURL)
                     return false
                 }
@@ -127,7 +135,10 @@ enum PricingSyncService {
     }
 
     private static func isLoopbackHost(_ host: String?) -> Bool {
-        let h = (host ?? "").lowercased()
+        let h = (host ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
         return h == "127.0.0.1" || h == "localhost" || h == "::1"
     }
 

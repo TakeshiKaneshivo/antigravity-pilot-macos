@@ -26,7 +26,7 @@ final class UpdateStore: ObservableObject {
 
     var currentVersion: String {
         (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String)?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? "0.1.0"
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? "0.2.0"
     }
 
     func hasActionableUpdate(skippedVersion: String?) -> Bool {

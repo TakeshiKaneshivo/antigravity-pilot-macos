@@ -94,7 +94,7 @@ final class BuilderAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
             let updated = await PricingSyncService.syncIfNeeded(config: initialConfig, support: appSupport)
             if updated {
                 await MainActor.run {
-                    monitorRef.refreshHistory()
+                    monitorRef.refreshHistory(queueIfBusy: true)
                 }
             }
         }
@@ -646,6 +646,7 @@ final class StatusBarController: NSObject, NSPopoverDelegate, NSMenuDelegate {
             keyEquivalent: ""
         )
         launchItem.target = self
+        launchItem.isEnabled = !appModel.isAnyOperationBusy
         menu.addItem(launchItem)
 
         let refreshItem = NSMenuItem(
@@ -2183,6 +2184,118 @@ enum SmokeTestRunner {
         check(
             notifCopiesValid && readPilotPath == "/Applications/Antigravity Pilot.app",
             "SystemNotificationService provides concise 3-line 4-language copy without versions & writeProxyEnv persists AG_PILOT_APP_PATH"
+        )
+
+        // 35. Deeply nested subagent hierarchy flattening & cycle safety (H1)
+        let sRootA = SessionSummary(id: "root-a", title: "Root A", stepCount: 1, lastModifiedTime: nowDate, status: "IDLE")
+        let sChildB = SessionSummary(id: "child-b", title: "Child B", stepCount: 1, lastModifiedTime: nowDate.addingTimeInterval(-5), status: "IDLE", parentConversationId: "root-a", rootConversationId: "root-a", nestingDepth: 1)
+        let sGrandC = SessionSummary(id: "grand-c", title: "Grandchild C", stepCount: 1, lastModifiedTime: nowDate.addingTimeInterval(-10), status: "RUNNING", parentConversationId: "child-b", rootConversationId: nil, nestingDepth: 1)
+        let sCycleX = SessionSummary(id: "cyc-x", title: "Cycle X", stepCount: 1, lastModifiedTime: nowDate.addingTimeInterval(-20), status: "IDLE", parentConversationId: "cyc-y", rootConversationId: nil, nestingDepth: 1)
+        let sCycleY = SessionSummary(id: "cyc-y", title: "Cycle Y", stepCount: 1, lastModifiedTime: nowDate.addingTimeInterval(-30), status: "IDLE", parentConversationId: "cyc-x", rootConversationId: nil, nestingDepth: 1)
+        let orderedHier = LanguageServerClient.orderSessionsHierarchically([sGrandC, sCycleY, sRootA, sCycleX, sChildB])
+        let orderedIds = orderedHier.map(\.id)
+        let grandOrdered = orderedHier.first(where: { $0.id == "grand-c" })
+        check(
+            orderedHier.count == 5
+                && Array(orderedIds.prefix(3)) == ["root-a", "child-b", "grand-c"]
+                && grandOrdered?.nestingDepth == 2,
+            "LanguageServerClient.orderSessionsHierarchically preserves depth>=2 subagents and cycles without dropping"
+        )
+
+        // 36. LocalSessionIndexReader 3-column legacy SQLite schema fallback (M3)
+        let legacyDBRoot = tempUpdatesRoot.appendingPathComponent("legacy-sql-db", isDirectory: true)
+        try? FileManager.default.createDirectory(at: legacyDBRoot, withIntermediateDirectories: true)
+        let legacyDBURL = legacyDBRoot.appendingPathComponent("conversation_summaries.db")
+        var legacyDb: OpaquePointer?
+        if sqlite3_open(legacyDBURL.path, &legacyDb) == SQLITE_OK, let legacyDb {
+            sqlite3_exec(legacyDb, "CREATE TABLE conversation_summaries (conversation_id text PRIMARY KEY, title text, workspace_uris text);", nil, nil, nil)
+            sqlite3_exec(legacyDb, "INSERT INTO conversation_summaries VALUES ('33333333-3333-3333-3333-333333333333', 'Legacy 3-Col Session', '[\"file:///Users/dev/legacy-proj\"]');", nil, nil, nil)
+            sqlite3_close(legacyDb)
+        }
+        let legacyMeta = LocalSessionIndexReader.loadMetadata(roots: [(legacyDBRoot, .desktop)])
+        let legacyEntry = legacyMeta["33333333-3333-3333-3333-333333333333"]
+        check(
+            legacyEntry?.title == "Legacy 3-Col Session" && legacyEntry?.workspaceName == "legacy-proj",
+            "LocalSessionIndexReader falls back cleanly on 3-column conversation_summaries schema"
+        )
+
+        // 37. PricingCatalog bundled >200K fallback & combined phases+tiers expansion (M5)
+        let bundledNoTiersURL = tempUpdatesRoot.appendingPathComponent("bundled-no-tiers.json")
+        let bundledComboJSON = """
+        {
+          "schemaVersion": 1,
+          "pricing": {
+            "gemini-3.1-pro": { "input": 2.00, "cache": 0.20, "output": 12.00 },
+            "combo-model": {
+              "input": 1.00,
+              "cache": 0.10,
+              "output": 5.00,
+              "phases": [
+                { "from": "2026-01-01", "until": "2026-12-01T00:00:00Z", "input": 2.00, "cache": 0.20, "output": 10.00 },
+                { "from": "2026-12-01", "input": 4.00, "cache": 0.40, "output": 20.00 }
+              ],
+              "tiers": [
+                { "maxPromptTokens": 200000 },
+                { "minPromptTokens": 200001, "input": 8.00, "cache": 0.80, "output": 40.00 }
+              ]
+            }
+          }
+        }
+        """.data(using: .utf8)!
+        try? bundledComboJSON.write(to: bundledNoTiersURL)
+        let bundledSrc = PricingCatalog.ResolvedPricingSource.load(
+            customPricingURL: nil,
+            syncedCatalogURL: nil,
+            bundledCatalogURL: bundledNoTiersURL,
+            modelCatalog: [:]
+        )
+        let bundledOver200k = PricingCatalog.estimateCostAndSavingsUSD(
+            model: "gemini-3.1-pro",
+            inputTokens: 250_000,
+            cacheReadTokens: 0,
+            outputTokens: 0,
+            dateKey: "2026-11-26",
+            source: bundledSrc
+        ).costUSD
+        let comboPhase1Low = PricingCatalog.estimateCostAndSavingsUSD(
+            model: "combo-model",
+            inputTokens: 100_000,
+            cacheReadTokens: 0,
+            outputTokens: 0,
+            dateKey: "2026-11-15",
+            source: bundledSrc
+        ).costUSD
+        let comboPhase2Low = PricingCatalog.estimateCostAndSavingsUSD(
+            model: "combo-model",
+            inputTokens: 100_000,
+            cacheReadTokens: 0,
+            outputTokens: 0,
+            dateKey: "2026-12-05",
+            source: bundledSrc
+        ).costUSD
+        let comboPhase2High = PricingCatalog.estimateCostAndSavingsUSD(
+            model: "combo-model",
+            inputTokens: 250_000,
+            cacheReadTokens: 0,
+            outputTokens: 0,
+            dateKey: "2026-12-05",
+            source: bundledSrc
+        ).costUSD
+        check(
+            abs(bundledOver200k - 1.0) < 0.001
+                && abs(comboPhase1Low - 0.2) < 0.001
+                && abs(comboPhase2Low - 0.4) < 0.001
+                && abs(comboPhase2High - 2.0) < 0.001,
+            "PricingCatalog preserves >200K tiers for bundled entries and combines phases + tiers"
+        )
+
+        // 38. Localization coverage for Running & Connected across all 4 languages (M6)
+        check(
+            L10n.t("运行中", "Running", .zhHant) == "執行中"
+                && L10n.t("运行中", "Running", .ru) == "Активно"
+                && L10n.t("已连接", "Connected", .zhHant) == "已連線"
+                && L10n.t("已连接", "Connected", .ru) == "Подключён",
+            "L10n resolves Running and Connected in zh-Hant and ru"
         )
 
         exit(tracker.hasFailed ? 1 : 0)

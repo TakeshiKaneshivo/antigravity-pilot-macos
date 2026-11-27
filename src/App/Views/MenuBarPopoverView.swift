@@ -173,15 +173,42 @@ struct MenuBarPopoverView: View {
             )
         }
         if appModel.runtimeStatusKind == .updateNeeded {
-            return (
-                "exclamationmark.arrow.circlepath",
-                .orange,
-                L10n.t(
-                    "原版已更新 · 打开主窗口重建副本",
-                    "Antigravity updated · Open window to rebuild",
-                    lang
+            switch appModel.hotUpdateStatus {
+            case .pilotIconUpdated:
+                return (
+                    "exclamationmark.arrow.circlepath",
+                    .orange,
+                    L10n.t(
+                        zhHans: "新 Pilot 图标可用 · 打开主窗口重建",
+                        zhHant: "新 Pilot 圖示可用 · 開啟主視窗重建",
+                        en: "New Pilot icon ready · Open window to rebuild",
+                        ru: "Новый значок Pilot · Откройте окно для пересборки",
+                        lang
+                    )
                 )
-            )
+            case .legacyUpdaterPresent:
+                return (
+                    "exclamationmark.arrow.circlepath",
+                    .orange,
+                    L10n.t(
+                        zhHans: "需一次性重建以停用旧更新器",
+                        zhHant: "需一次性重建以停用舊更新器",
+                        en: "One-time rebuild needed to disable copy updater",
+                        ru: "Нужна разовая пересборка для отключения автообновления копии",
+                        lang
+                    )
+                )
+            default:
+                return (
+                    "exclamationmark.arrow.circlepath",
+                    .orange,
+                    L10n.t(
+                        "原版已更新 · 打开主窗口重建副本",
+                        "Antigravity updated · Open window to rebuild",
+                        lang
+                    )
+                )
+            }
         }
         return nil
     }
@@ -358,6 +385,7 @@ struct MenuBarPopoverView: View {
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
+            .disabled(appModel.isAnyOperationBusy || antigravityUpdateStore.state.isBusy)
 
             Spacer()
 

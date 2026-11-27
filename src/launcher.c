@@ -320,7 +320,8 @@ static void spawn_startup_tip_async(void) {
     }
 
     const char *built_ver = getenv("AG_SOURCE_VERSION");
-    const char *app_lang = getenv("AG_APP_LANG");
+    const char *explicit_app_lang = getenv("AG_APP_LANG");
+    const char *app_lang = explicit_app_lang;
     if (!app_lang || !app_lang[0]) {
       const char *sys_lang = getenv("LANG");
       if (sys_lang && (strncmp(sys_lang, "zh_TW", 5) == 0 || strncmp(sys_lang, "zh_HK", 5) == 0 ||
@@ -349,7 +350,11 @@ static void spawn_startup_tip_async(void) {
 
     char pilot_bin[PATH_MAX];
     if (resolve_pilot_builder_binary(pilot_bin, sizeof(pilot_bin))) {
-      execl(pilot_bin, "AntigravityProxyBuilder", "--notify-runtime-update", "--lang", app_lang, (char *)NULL);
+      if (explicit_app_lang && explicit_app_lang[0]) {
+        execl(pilot_bin, "AntigravityProxyBuilder", "--notify-runtime-update", "--lang", explicit_app_lang, (char *)NULL);
+      } else {
+        execl(pilot_bin, "AntigravityProxyBuilder", "--notify-runtime-update", (char *)NULL);
+      }
     }
 
     const char *subtitle;

@@ -150,9 +150,13 @@ build_c_target() {
     return 0
   fi
 
+  rm -f "$hash_file"
+  local tmp_out="${output_path}.tmp.$$"
+  rm -f "$tmp_out"
   "$CC" "${CFLAGS[@]}" "${CLANG_ARCH_FLAGS[@]}" ${extra_flags[@]+"${extra_flags[@]}"} \
-    -o "$output_path" \
+    -o "$tmp_out" \
     "$src_path"
+  mv "$tmp_out" "$output_path"
 
   printf '%s\n' "$new_hash" > "${hash_file}.tmp"
   mv "${hash_file}.tmp" "$hash_file"
@@ -176,6 +180,7 @@ data = {
     }
 }
 used_stems = set()
+expected_names = {"master.swiftdeps", "master.priors"}
 for f in files:
     abs_f = os.path.abspath(f)
     rel = os.path.relpath(abs_f, root_real)
@@ -186,11 +191,23 @@ for f in files:
             idx += 1
         stem = f"{stem}_{idx}"
     used_stems.add(stem)
+    obj_name = f"{stem}.o"
+    deps_name = f"{stem}.swiftdeps"
+    d_name = f"{stem}.d"
+    expected_names.update((obj_name, deps_name, d_name))
     data[f] = {
-        "object": os.path.join(obj_dir, f"{stem}.o"),
-        "swift-dependencies": os.path.join(obj_dir, f"{stem}.swiftdeps"),
-        "dependencies": os.path.join(obj_dir, f"{stem}.d"),
+        "object": os.path.join(obj_dir, obj_name),
+        "swift-dependencies": os.path.join(obj_dir, deps_name),
+        "dependencies": os.path.join(obj_dir, d_name),
     }
+
+if os.path.isdir(obj_dir):
+    for entry in os.listdir(obj_dir):
+        if entry.endswith((".o", ".swiftdeps", ".d")) and entry not in expected_names:
+            try:
+                os.remove(os.path.join(obj_dir, entry))
+            except OSError:
+                pass
 
 os.makedirs(os.path.dirname(ofm_path), exist_ok=True)
 tmp_path = ofm_path + ".tmp"
@@ -226,7 +243,7 @@ build_swift_arch() {
   local swift_ver
   swift_ver="$("$SWIFTC" --version 2>/dev/null | tr '\n' ' ' || echo "$SWIFTC")"
   local env_str
-  env_str="swift=${swift_ver}|sdk=${SDKROOT}|min=${MIN_MACOS}|arch=${arch}|extra=${extra_flags[*]-}"
+  env_str="swift=${swift_ver}|sdk=${SDKROOT}|min=${MIN_MACOS}|arch=${arch}|root=${ROOT}|extra=${extra_flags[*]-}"
   local env_key
   env_key="$(hash_files_and_key "$env_str")"
   local inputs_key
@@ -239,6 +256,8 @@ build_swift_arch() {
 
   if [[ ! -f "$env_hash_file" ]] || [[ "$(cat "$env_hash_file")" != "$env_key" ]]; then
     rm -rf "$target_cache"
+  else
+    rm -f "$inputs_hash_file"
   fi
 
   mkdir -p "$obj_dir"
@@ -351,9 +370,17 @@ if command -v "$SWIFTC" >/dev/null 2>&1; then
     if [[ -f "$ICON_CACHE_DIR/menubar-icon.png" && -f "$ICON_CACHE_DIR/menubar-icon@2x.png" && -f "$ICON_CACHE_DIR/menubar-icon@3x.png" && -f "$MENUBAR_HASH_FILE" ]] && [[ "$(cat "$MENUBAR_HASH_FILE")" == "$MENUBAR_HASH" ]]; then
       printf '[cache hit] menubar-icon\n'
     else
-      sips -z 18 18 "$ROOT/menubar-icon.png" --out "$ICON_CACHE_DIR/menubar-icon.png" >/dev/null
-      sips -z 36 36 "$ROOT/menubar-icon.png" --out "$ICON_CACHE_DIR/menubar-icon@2x.png" >/dev/null
-      sips -z 54 54 "$ROOT/menubar-icon.png" --out "$ICON_CACHE_DIR/menubar-icon@3x.png" >/dev/null
+      rm -f "$MENUBAR_HASH_FILE"
+      local_mb1="$ICON_CACHE_DIR/.menubar-icon.tmp.$$.png"
+      local_mb2="$ICON_CACHE_DIR/.menubar-icon@2x.tmp.$$.png"
+      local_mb3="$ICON_CACHE_DIR/.menubar-icon@3x.tmp.$$.png"
+      rm -f "$local_mb1" "$local_mb2" "$local_mb3"
+      sips -z 18 18 "$ROOT/menubar-icon.png" --out "$local_mb1" >/dev/null
+      sips -z 36 36 "$ROOT/menubar-icon.png" --out "$local_mb2" >/dev/null
+      sips -z 54 54 "$ROOT/menubar-icon.png" --out "$local_mb3" >/dev/null
+      mv "$local_mb1" "$ICON_CACHE_DIR/menubar-icon.png"
+      mv "$local_mb2" "$ICON_CACHE_DIR/menubar-icon@2x.png"
+      mv "$local_mb3" "$ICON_CACHE_DIR/menubar-icon@3x.png"
       printf '%s\n' "$MENUBAR_HASH" > "${MENUBAR_HASH_FILE}.tmp"
       mv "${MENUBAR_HASH_FILE}.tmp" "$MENUBAR_HASH_FILE"
       printf '[built] menubar-icon\n'
@@ -370,6 +397,7 @@ if command -v "$SWIFTC" >/dev/null 2>&1; then
   if [[ -f "$CACHED_ICNS" && -f "$ICNS_HASH_FILE" ]] && [[ "$(cat "$ICNS_HASH_FILE")" == "$ICNS_HASH" ]]; then
     printf '[cache hit] antigravity-pilot.icns\n'
   else
+    rm -f "$ICNS_HASH_FILE"
     ICONSET="$BUILD_DIR/antigravity-pilot.iconset"
     rm -rf "$ICONSET"
     mkdir -p "$ICONSET"
@@ -383,7 +411,10 @@ if command -v "$SWIFTC" >/dev/null 2>&1; then
     sips -z 512 512 "$ROOT/icon.png" --out "$ICONSET/icon_256x256@2x.png" >/dev/null
     sips -z 512 512 "$ROOT/icon.png" --out "$ICONSET/icon_512x512.png" >/dev/null
     sips -z 1024 1024 "$ROOT/icon.png" --out "$ICONSET/icon_512x512@2x.png" >/dev/null
-    iconutil -c icns "$ICONSET" -o "$CACHED_ICNS"
+    TMP_ICNS="$ICON_CACHE_DIR/.antigravity-pilot.tmp.$$.icns"
+    rm -f "$TMP_ICNS"
+    iconutil -c icns "$ICONSET" -o "$TMP_ICNS"
+    mv "$TMP_ICNS" "$CACHED_ICNS"
     rm -rf "$ICONSET"
     printf '%s\n' "$ICNS_HASH" > "${ICNS_HASH_FILE}.tmp"
     mv "${ICNS_HASH_FILE}.tmp" "$ICNS_HASH_FILE"

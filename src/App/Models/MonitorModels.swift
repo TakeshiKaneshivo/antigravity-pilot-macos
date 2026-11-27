@@ -1145,7 +1145,26 @@ enum PricingCatalog {
 
     private static func convertExternalEntry(_ entry: ExternalPricingEntry) -> [PricingRule] {
         var rules: [PricingRule] = []
-        if let tiers = entry.tiers, !tiers.isEmpty {
+        let phases = entry.phases ?? []
+        let tiers = entry.tiers ?? []
+
+        if !phases.isEmpty && !tiers.isEmpty {
+            for p in phases {
+                let fromKey = p.from.map { String($0.prefix(10)) }
+                let toKey = p.until.map { adjustExclusiveUntilDateKey($0) }
+                for t in tiers {
+                    rules.append(PricingRule(
+                        effectiveFrom: fromKey,
+                        effectiveTo: toKey,
+                        maxPromptTokens: t.maxPromptTokens,
+                        minPromptTokens: t.minPromptTokens,
+                        inputPerMillion: t.input ?? p.input ?? entry.input,
+                        outputPerMillion: t.output ?? p.output ?? entry.output,
+                        cacheReadPerMillion: t.cache ?? p.cache ?? entry.cache
+                    ))
+                }
+            }
+        } else if !tiers.isEmpty {
             for t in tiers {
                 rules.append(PricingRule(
                     effectiveFrom: nil,
@@ -1157,8 +1176,7 @@ enum PricingCatalog {
                     cacheReadPerMillion: t.cache ?? entry.cache
                 ))
             }
-        }
-        if let phases = entry.phases, !phases.isEmpty {
+        } else if !phases.isEmpty {
             for p in phases {
                 let fromKey = p.from.map { String($0.prefix(10)) }
                 let toKey = p.until.map { adjustExclusiveUntilDateKey($0) }
@@ -1222,8 +1240,13 @@ enum PricingCatalog {
             return convertExternalEntry(synced)
         }
 
-        // 3. Bundled pricing-catalog.json
+        // 3. Bundled pricing-catalog.json (preserve >200K tiers if bundled entry lacks tiers)
         if let bundled = bundledMatch {
+            let hasBundledTiers = (bundled.tiers?.isEmpty == false)
+            if !hasBundledTiers && promptTotal > 200_000,
+               let builtIn = builtInRules[normKey], builtIn.contains(where: { $0.minPromptTokens != nil }) {
+                return builtIn
+            }
             return convertExternalEntry(bundled)
         }
 

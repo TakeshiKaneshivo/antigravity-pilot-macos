@@ -45,6 +45,7 @@ curl -fsSL --retry 2 --connect-timeout 15 "$MANIFEST_URL" -o "$MANIFEST_PATH"
 
 META_OUT="$(python3 - "$MANIFEST_PATH" "$(sw_vers -productVersion)" <<'PYEOF'
 import json
+import os
 import sys
 
 manifest_path, current_os = sys.argv[1:3]
@@ -69,6 +70,10 @@ def ver_tuple(raw):
 
 if not version or not url or not file_name or len(sha256) != 64:
     raise SystemExit("Invalid latest.json manifest fields.")
+
+allow_http = os.environ.get("ALLOW_INSECURE_HTTP") == "1"
+if not url.startswith("https://") and not (allow_http and url.startswith("http://")):
+    raise SystemExit("Installer download URL must use HTTPS.")
 
 if ver_tuple(current_os) < ver_tuple(min_macos):
     raise SystemExit(f"macOS {min_macos}+ is required (current: {current_os}).")

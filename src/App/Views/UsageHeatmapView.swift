@@ -536,9 +536,21 @@ struct UsageHeatmapView: View {
 
                 switch breakdownDimension {
                 case .model:
-                    donutBreakdownBody(entries: displayedModelEntries)
+                    donutBreakdownBody(
+                        entries: displayedModelEntries,
+                        emptyText: L10n.t("所选周期暂无模型调用记录。", "No model usage recorded in this period.", lang)
+                    )
                 case .project:
-                    donutBreakdownBody(entries: displayedProjectEntries)
+                    donutBreakdownBody(
+                        entries: displayedProjectEntries,
+                        emptyText: L10n.t(
+                            zhHans: "所选周期暂无项目用量记录。",
+                            zhHant: "所選週期暫無專案用量紀錄。",
+                            en: "No project usage recorded in this period.",
+                            ru: "За выбранный период нет данных по проектам.",
+                            lang
+                        )
+                    )
                 case .session:
                     sessionBreakdownBody(sessions: Array(currentSessions.prefix(20)))
                 }
@@ -547,10 +559,10 @@ struct UsageHeatmapView: View {
     }
 
     @ViewBuilder
-    private func donutBreakdownBody(entries: [BreakdownChartEntry]) -> some View {
+    private func donutBreakdownBody(entries: [BreakdownChartEntry], emptyText: String) -> some View {
         let maxTokens = max(1, entries.map(\.totalTokens).max() ?? 1)
         if entries.isEmpty {
-            Text(L10n.t("所选周期暂无模型调用记录。", "No model usage recorded in this period.", lang))
+            Text(emptyText)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)

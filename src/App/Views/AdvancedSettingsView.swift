@@ -11,19 +11,19 @@ struct AdvancedSettingsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 8) {
                 languageCard
-                    .disabled(appModel.isWorking)
+                    .disabled(appModel.isAnyOperationBusy)
 
                 chartPaletteCard
-                    .disabled(appModel.isWorking)
+                    .disabled(appModel.isAnyOperationBusy)
 
                 noProxyCard
-                    .disabled(appModel.isWorking)
+                    .disabled(appModel.isAnyOperationBusy)
 
                 behaviorCard
-                    .disabled(appModel.isWorking)
+                    .disabled(appModel.isAnyOperationBusy)
 
                 maintenanceCard
-                    .disabled(appModel.isWorking)
+                    .disabled(appModel.isAnyOperationBusy)
 
                 if let error = appModel.errorMessage {
                     messageBanner(error, isError: true)

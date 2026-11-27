@@ -373,7 +373,7 @@ function collapseChevron(cardId: string, collapsed: boolean): string {
   return `<button type="button" class="collapse-btn" data-action="toggle-card" data-card-id="${escapeHtml(cardId)}" aria-expanded="${collapsed ? 'false' : 'true'}" title="${collapsed ? tr('展开面板', 'Expand panel') : tr('收起面板', 'Collapse panel')}">▾</button>`;
 }
 
-const app = new App({ name: 'Antigravity Pilot', version: '0.1.0' }, {});
+const app = new App({ name: 'Antigravity Pilot', version: '0.2.0' }, {});
 
 type HostStyleVariables = Parameters<typeof applyHostStyleVariables>[0];
 
@@ -1304,7 +1304,7 @@ function renderUsageTab(usage: UsageHistoryDTO | null): string {
                 displayName: m.displayName,
                 totalTokens: m.totalTokens,
                 estimatedCostUSD: m.estimatedCostUSD,
-              })))
+              })), tr('所选周期暂无模型调用记录。', 'No model usage recorded in this period.'))
             : state.breakdownDim === 'project'
               ? renderDonutBreakdown(projects.map((p) => ({
                   key: p.projectKey,
@@ -1313,7 +1313,7 @@ function renderUsageTab(usage: UsageHistoryDTO | null): string {
                     : p.displayName,
                   totalTokens: p.totalTokens,
                   estimatedCostUSD: p.estimatedCostUSD,
-                })))
+                })), tr('所选周期暂无项目用量记录。', 'No project usage recorded in this period.'))
               : renderSessionBreakdown(sessions)}
         </div>
       </div>
@@ -1374,9 +1374,9 @@ interface DonutItem {
   estimatedCostUSD: number;
 }
 
-function renderDonutBreakdown(items: DonutItem[]): string {
+function renderDonutBreakdown(items: DonutItem[], emptyText: string): string {
   if (items.length === 0) {
-    return `<div class="muted">${tr('所选周期暂无模型调用记录。', 'No model usage recorded in this period.')}</div>`;
+    return `<div class="muted">${escapeHtml(emptyText)}</div>`;
   }
 
   let displayed: DonutItem[];
