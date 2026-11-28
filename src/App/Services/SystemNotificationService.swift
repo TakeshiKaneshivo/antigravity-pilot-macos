@@ -23,9 +23,12 @@ final class SystemNotificationService: NSObject, UNUserNotificationCenterDelegat
 
     private var onOpenMainWindow: (() -> Void)?
     private var onOpenMonitorTab: (() -> Void)?
+    private var onWillFocusAntigravity: (() -> Void)?
     private var darwinNotifyToken: Int32 = NOTIFY_TOKEN_INVALID
     private var hookEventDarwinToken: Int32 = NOTIFY_TOKEN_INVALID
     private var recentNotificationDates: [String: Date] = [:]
+    nonisolated private static let externalFocusLock = NSLock()
+    nonisolated(unsafe) private static var suppressReopenUntilEpoch: Double = 0
 
     nonisolated static func resolveLanguage(rawCode: String?) -> AppLanguage {
         guard let raw = rawCode?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else {
@@ -98,12 +101,30 @@ final class SystemNotificationService: NSObject, UNUserNotificationCenterDelegat
         try? FileManager.default.removeItem(at: url)
     }
 
-    func configure(onOpenMainWindow: @escaping () -> Void, onOpenMonitorTab: (() -> Void)? = nil) {
+    func configure(
+        onOpenMainWindow: @escaping () -> Void,
+        onOpenMonitorTab: (() -> Void)? = nil,
+        onWillFocusAntigravity: (() -> Void)? = nil
+    ) {
         self.onOpenMainWindow = onOpenMainWindow
         self.onOpenMonitorTab = onOpenMonitorTab
+        self.onWillFocusAntigravity = onWillFocusAntigravity
         if Self.isRunningInAppBundle {
             UNUserNotificationCenter.current().delegate = self
         }
+    }
+
+    nonisolated static func markPendingExternalFocus(durationSeconds: TimeInterval = 1.5, now: Date = Date()) {
+        externalFocusLock.lock()
+        suppressReopenUntilEpoch = max(suppressReopenUntilEpoch, now.timeIntervalSince1970 + durationSeconds)
+        externalFocusLock.unlock()
+    }
+
+    nonisolated static func isExternalFocusPending(now: Date = Date()) -> Bool {
+        externalFocusLock.lock()
+        let pending = now.timeIntervalSince1970 < suppressReopenUntilEpoch
+        externalFocusLock.unlock()
+        return pending
     }
 
     func startDarwinListener(onRuntimeUpdateNeeded: @escaping @MainActor () -> Void) {
@@ -218,35 +239,78 @@ final class SystemNotificationService: NSObject, UNUserNotificationCenterDelegat
         }
     }
 
+    nonisolated static func isAntigravityMainBundle(bundleIdentifier: String?, bundlePath: String?) -> Bool {
+        let bid = (bundleIdentifier ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let path = (bundlePath ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if bid == "com.takeshikaneshivo.antigravity-pilot.macos" || bid.contains(".helper") {
+            return false
+        }
+        if path.contains("/Contents/Frameworks/") {
+            return false
+        }
+        if bid == "com.google.antigravity.pilot.runtime"
+            || bid == "com.google.antigravity.proxy.runtime"
+            || bid == "com.google.antigravity" {
+            return true
+        }
+        return path.hasSuffix("/Antigravity-Pilot.app")
+            || path.hasSuffix("/Antigravity-Proxy.app")
+            || path.hasSuffix("/Antigravity.app")
+    }
+
     func isAntigravityFrontmost() -> Bool {
         guard let front = NSWorkspace.shared.frontmostApplication else { return false }
         let selfPid = ProcessInfo.processInfo.processIdentifier
-        if front.processIdentifier == selfPid {
-            return false
-        }
-        let bid = (front.bundleIdentifier ?? "").lowercased()
-        let path = front.bundleURL?.path ?? ""
-        if bid.contains("antigravity") && !bid.contains("pilot") {
-            return true
-        }
-        return path.contains("/Antigravity.app") || path.contains("/Antigravity-Pilot.app") || path.contains("/Antigravity-Proxy.app")
+        guard front.processIdentifier != selfPid else { return false }
+        return Self.isAntigravityMainBundle(
+            bundleIdentifier: front.bundleIdentifier,
+            bundlePath: front.bundleURL?.standardizedFileURL.path
+        )
     }
 
     private func focusAntigravityOrPilot() {
+        Self.markPendingExternalFocus()
+        onWillFocusAntigravity?()
+
         let selfPid = ProcessInfo.processInfo.processIdentifier
-        let running = NSWorkspace.shared.runningApplications.first { app in
-            guard app.processIdentifier != selfPid else { return false }
-            let bid = (app.bundleIdentifier ?? "").lowercased()
-            let path = app.bundleURL?.path ?? ""
-            if bid.contains("antigravity") && !bid.contains("pilot") {
-                return true
-            }
-            return path.contains("/Antigravity.app") || path.contains("/Antigravity-Pilot.app") || path.contains("/Antigravity-Proxy.app")
+        let detected = RunningInstanceManager.detectRunningInstances().filter {
+            !$0.app.isTerminated && $0.app.activationPolicy == .regular
         }
-        if let running {
-            running.activate(options: [.activateIgnoringOtherApps])
-        } else {
+        let targetApp: NSRunningApplication? =
+            detected.first(where: { $0.kind == .runtime })?.app
+            ?? detected.first?.app
+            ?? NSWorkspace.shared.runningApplications.first { app in
+                guard app.processIdentifier != selfPid,
+                      !app.isTerminated,
+                      app.activationPolicy == .regular else {
+                    return false
+                }
+                return Self.isAntigravityMainBundle(
+                    bundleIdentifier: app.bundleIdentifier,
+                    bundlePath: app.bundleURL?.standardizedFileURL.path
+                )
+            }
+
+        guard let target = targetApp else {
             onOpenMainWindow?()
+            return
+        }
+
+        if #available(macOS 14.0, *) {
+            NSApp.yieldActivation(to: target)
+        }
+        target.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
+
+        if let bundleURL = target.bundleURL {
+            let openConfig = NSWorkspace.OpenConfiguration()
+            openConfig.activates = true
+            openConfig.createsNewApplicationInstance = false
+            NSWorkspace.shared.openApplication(at: bundleURL, configuration: openConfig) { _, _ in
+                DispatchQueue.main.async {
+                    target.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
+                }
+            }
         }
     }
 
@@ -435,6 +499,9 @@ final class SystemNotificationService: NSObject, UNUserNotificationCenterDelegat
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {
         let action = response.notification.request.content.userInfo["action"] as? String ?? "openMainWindow"
+        if action == "focusAntigravity" {
+            Self.markPendingExternalFocus()
+        }
         Task { @MainActor in
             switch action {
             case "focusAntigravity":

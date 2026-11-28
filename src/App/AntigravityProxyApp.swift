@@ -54,6 +54,7 @@ final class BuilderAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
     private var mainWindowMouseDownMonitor: Any?
     private var cancellables = Set<AnyCancellable>()
     private var lastConsumedHookEpoch: Double = Date().timeIntervalSince1970
+    private var lastReopenOpenedMainWindowAt: Date?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         appModel.load()
@@ -66,6 +67,15 @@ final class BuilderAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
             onOpenMonitorTab: { [weak self] in
                 self?.appModel.requestOpenTab(.monitor)
                 self?.showMainWindow()
+            },
+            onWillFocusAntigravity: { [weak self] in
+                guard let self else { return }
+                if self.appModel.config.enableMenuBarMonitor,
+                   let reopenedAt = self.lastReopenOpenedMainWindowAt,
+                   Date().timeIntervalSince(reopenedAt) < 1.2 {
+                    self.lastReopenOpenedMainWindowAt = nil
+                    self.hideMainWindowToMenuBar()
+                }
             }
         )
         SystemNotificationService.writePIDFile(at: appSupport.pilotPIDURL)
@@ -246,6 +256,13 @@ final class BuilderAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if SystemNotificationService.isExternalFocusPending() {
+            return false
+        }
+        let wasVisible = mainWindow?.isVisible == true && mainWindow?.isMiniaturized == false
+        if !wasVisible {
+            lastReopenOpenedMainWindowAt = Date()
+        }
         showMainWindow()
         return true
     }
@@ -2751,6 +2768,31 @@ enum SmokeTestRunner {
                 && installedHooksText.contains("ask_question")
                 && hookPluginInstaller.status(bundledVersion: "0.3.0") == .installedCurrent(version: "0.3.0"),
             "McpPluginInstaller writes valid hooks.json and verifies status"
+        )
+
+        // 45. SystemNotificationService bundle matcher rejects Helper processes & tracks external focus window
+        let fakeFocusNow = Date(timeIntervalSince1970: 1_700_000_000)
+        SystemNotificationService.markPendingExternalFocus(durationSeconds: 1.5, now: fakeFocusNow)
+        check(
+            SystemNotificationService.isAntigravityMainBundle(
+                bundleIdentifier: "com.google.antigravity.pilot.runtime",
+                bundlePath: "/Users/test/Library/Application Support/Antigravity Pilot/Runtime/Antigravity-Pilot.app"
+            )
+                && SystemNotificationService.isAntigravityMainBundle(
+                    bundleIdentifier: "com.google.antigravity",
+                    bundlePath: "/Applications/Antigravity.app"
+                )
+                && !SystemNotificationService.isAntigravityMainBundle(
+                    bundleIdentifier: "com.google.antigravity.pilot.runtime.helper",
+                    bundlePath: "/Users/test/Library/Application Support/Antigravity Pilot/Runtime/Antigravity-Pilot.app/Contents/Frameworks/Antigravity Helper.app"
+                )
+                && !SystemNotificationService.isAntigravityMainBundle(
+                    bundleIdentifier: "com.takeshikaneshivo.antigravity-pilot.macos",
+                    bundlePath: "/Applications/Antigravity Pilot.app"
+                )
+                && SystemNotificationService.isExternalFocusPending(now: fakeFocusNow.addingTimeInterval(0.5))
+                && !SystemNotificationService.isExternalFocusPending(now: fakeFocusNow.addingTimeInterval(2.0)),
+            "SystemNotificationService filters helper processes and enforces reopen suppression window"
         )
 
         exit(tracker.hasFailed ? 1 : 0)
