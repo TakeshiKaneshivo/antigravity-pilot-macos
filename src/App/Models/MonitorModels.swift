@@ -618,6 +618,9 @@ struct DailyUsageBucket: Identifiable, Equatable, Codable {
     var requestCount: Int
     var estimatedCostUSD: Double
     var cacheSavingsUSD: Double
+    var over200kRequestCount: Int
+    var over200kTokens: Int
+    var over200kPremiumUSD: Double
 
     init(
         dateKey: String,
@@ -626,7 +629,10 @@ struct DailyUsageBucket: Identifiable, Equatable, Codable {
         outputTokens: Int,
         requestCount: Int,
         estimatedCostUSD: Double,
-        cacheSavingsUSD: Double = 0
+        cacheSavingsUSD: Double = 0,
+        over200kRequestCount: Int = 0,
+        over200kTokens: Int = 0,
+        over200kPremiumUSD: Double = 0
     ) {
         self.dateKey = dateKey
         self.inputTokens = inputTokens
@@ -635,10 +641,43 @@ struct DailyUsageBucket: Identifiable, Equatable, Codable {
         self.requestCount = requestCount
         self.estimatedCostUSD = estimatedCostUSD
         self.cacheSavingsUSD = cacheSavingsUSD
+        self.over200kRequestCount = over200kRequestCount
+        self.over200kTokens = over200kTokens
+        self.over200kPremiumUSD = over200kPremiumUSD
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        dateKey = try c.decode(String.self, forKey: .dateKey)
+        inputTokens = try c.decode(Int.self, forKey: .inputTokens)
+        cacheReadTokens = try c.decode(Int.self, forKey: .cacheReadTokens)
+        outputTokens = try c.decode(Int.self, forKey: .outputTokens)
+        requestCount = try c.decode(Int.self, forKey: .requestCount)
+        estimatedCostUSD = try c.decode(Double.self, forKey: .estimatedCostUSD)
+        cacheSavingsUSD = try c.decodeIfPresent(Double.self, forKey: .cacheSavingsUSD) ?? 0
+        over200kRequestCount = try c.decodeIfPresent(Int.self, forKey: .over200kRequestCount) ?? 0
+        over200kTokens = try c.decodeIfPresent(Int.self, forKey: .over200kTokens) ?? 0
+        over200kPremiumUSD = try c.decodeIfPresent(Double.self, forKey: .over200kPremiumUSD) ?? 0
     }
 
     var totalTokens: Int {
         inputTokens + cacheReadTokens + outputTokens
+    }
+
+    var promptTokens: Int {
+        inputTokens + cacheReadTokens
+    }
+
+    var cacheHitRate: Double {
+        promptTokens > 0 ? Double(cacheReadTokens) / Double(promptTokens) : 0
+    }
+
+    var over200kRequestRate: Double {
+        requestCount > 0 ? Double(over200kRequestCount) / Double(requestCount) : 0
+    }
+
+    var grossCostBeforeCacheUSD: Double {
+        estimatedCostUSD + cacheSavingsUSD
     }
 }
 
@@ -652,6 +691,9 @@ struct ModelUsageSummary: Identifiable, Equatable {
     let requestCount: Int
     let estimatedCostUSD: Double
     let cacheSavingsUSD: Double
+    let over200kRequestCount: Int
+    let over200kTokens: Int
+    let over200kPremiumUSD: Double
 
     init(
         modelKey: String,
@@ -661,7 +703,10 @@ struct ModelUsageSummary: Identifiable, Equatable {
         outputTokens: Int,
         requestCount: Int,
         estimatedCostUSD: Double,
-        cacheSavingsUSD: Double = 0
+        cacheSavingsUSD: Double = 0,
+        over200kRequestCount: Int = 0,
+        over200kTokens: Int = 0,
+        over200kPremiumUSD: Double = 0
     ) {
         self.modelKey = modelKey
         self.displayName = displayName
@@ -671,10 +716,29 @@ struct ModelUsageSummary: Identifiable, Equatable {
         self.requestCount = requestCount
         self.estimatedCostUSD = estimatedCostUSD
         self.cacheSavingsUSD = cacheSavingsUSD
+        self.over200kRequestCount = over200kRequestCount
+        self.over200kTokens = over200kTokens
+        self.over200kPremiumUSD = over200kPremiumUSD
     }
 
     var totalTokens: Int {
         inputTokens + cacheReadTokens + outputTokens
+    }
+
+    var promptTokens: Int {
+        inputTokens + cacheReadTokens
+    }
+
+    var cacheHitRate: Double {
+        promptTokens > 0 ? Double(cacheReadTokens) / Double(promptTokens) : 0
+    }
+
+    var over200kRequestRate: Double {
+        requestCount > 0 ? Double(over200kRequestCount) / Double(requestCount) : 0
+    }
+
+    var grossCostBeforeCacheUSD: Double {
+        estimatedCostUSD + cacheSavingsUSD
     }
 }
 
@@ -689,9 +753,56 @@ struct ProjectUsageSummary: Identifiable, Equatable {
     let sessionCount: Int
     let estimatedCostUSD: Double
     let cacheSavingsUSD: Double
+    let over200kRequestCount: Int
+    let over200kTokens: Int
+    let over200kPremiumUSD: Double
+
+    init(
+        projectKey: String,
+        displayName: String,
+        inputTokens: Int,
+        cacheReadTokens: Int,
+        outputTokens: Int,
+        requestCount: Int,
+        sessionCount: Int,
+        estimatedCostUSD: Double,
+        cacheSavingsUSD: Double = 0,
+        over200kRequestCount: Int = 0,
+        over200kTokens: Int = 0,
+        over200kPremiumUSD: Double = 0
+    ) {
+        self.projectKey = projectKey
+        self.displayName = displayName
+        self.inputTokens = inputTokens
+        self.cacheReadTokens = cacheReadTokens
+        self.outputTokens = outputTokens
+        self.requestCount = requestCount
+        self.sessionCount = sessionCount
+        self.estimatedCostUSD = estimatedCostUSD
+        self.cacheSavingsUSD = cacheSavingsUSD
+        self.over200kRequestCount = over200kRequestCount
+        self.over200kTokens = over200kTokens
+        self.over200kPremiumUSD = over200kPremiumUSD
+    }
 
     var totalTokens: Int {
         inputTokens + cacheReadTokens + outputTokens
+    }
+
+    var promptTokens: Int {
+        inputTokens + cacheReadTokens
+    }
+
+    var cacheHitRate: Double {
+        promptTokens > 0 ? Double(cacheReadTokens) / Double(promptTokens) : 0
+    }
+
+    var over200kRequestRate: Double {
+        requestCount > 0 ? Double(over200kRequestCount) / Double(requestCount) : 0
+    }
+
+    var grossCostBeforeCacheUSD: Double {
+        estimatedCostUSD + cacheSavingsUSD
     }
 }
 
@@ -707,10 +818,61 @@ struct SessionUsageSummary: Identifiable, Equatable {
     let requestCount: Int
     let estimatedCostUSD: Double
     let cacheSavingsUSD: Double
+    let over200kRequestCount: Int
+    let over200kTokens: Int
+    let over200kPremiumUSD: Double
     let lastDateKey: String
+
+    init(
+        cascadeId: String,
+        title: String,
+        projectName: String?,
+        clientSource: UsageClientSource,
+        inputTokens: Int,
+        cacheReadTokens: Int,
+        outputTokens: Int,
+        requestCount: Int,
+        estimatedCostUSD: Double,
+        cacheSavingsUSD: Double = 0,
+        over200kRequestCount: Int = 0,
+        over200kTokens: Int = 0,
+        over200kPremiumUSD: Double = 0,
+        lastDateKey: String
+    ) {
+        self.cascadeId = cascadeId
+        self.title = title
+        self.projectName = projectName
+        self.clientSource = clientSource
+        self.inputTokens = inputTokens
+        self.cacheReadTokens = cacheReadTokens
+        self.outputTokens = outputTokens
+        self.requestCount = requestCount
+        self.estimatedCostUSD = estimatedCostUSD
+        self.cacheSavingsUSD = cacheSavingsUSD
+        self.over200kRequestCount = over200kRequestCount
+        self.over200kTokens = over200kTokens
+        self.over200kPremiumUSD = over200kPremiumUSD
+        self.lastDateKey = lastDateKey
+    }
 
     var totalTokens: Int {
         inputTokens + cacheReadTokens + outputTokens
+    }
+
+    var promptTokens: Int {
+        inputTokens + cacheReadTokens
+    }
+
+    var cacheHitRate: Double {
+        promptTokens > 0 ? Double(cacheReadTokens) / Double(promptTokens) : 0
+    }
+
+    var over200kRequestRate: Double {
+        requestCount > 0 ? Double(over200kRequestCount) / Double(requestCount) : 0
+    }
+
+    var grossCostBeforeCacheUSD: Double {
+        estimatedCostUSD + cacheSavingsUSD
     }
 }
 
@@ -1288,19 +1450,18 @@ enum PricingCatalog {
         ).costUSD
     }
 
-    static func estimateCostAndSavingsUSD(
-        model rawModel: String,
-        inputTokens: Int,
-        cacheReadTokens: Int,
-        outputTokens: Int,
-        dateKey: String,
-        source: ResolvedPricingSource,
-        promptTokensForTier: Int? = nil
-    ) -> (costUSD: Double, cacheSavingsUSD: Double) {
-        let promptTotal = promptTokensForTier ?? (inputTokens + cacheReadTokens)
-        let candidateRules = resolveCandidateRules(rawModel: rawModel, source: source, promptTotal: promptTotal)
+    struct CostEstimateBreakdown: Equatable {
+        let costUSD: Double
+        let cacheSavingsUSD: Double
+        let over200kPremiumUSD: Double
+    }
 
-        let matched = candidateRules.first { rule in
+    private static func matchRule(
+        in candidateRules: [PricingRule],
+        dateKey: String,
+        promptTotal: Int
+    ) -> PricingRule {
+        candidateRules.first { rule in
             if let from = rule.effectiveFrom, dateKey < from { return false }
             if let to = rule.effectiveTo, !to.isEmpty {
                 // "until" from phases is exclusive upper bound if ISO, or inclusive YYYY-MM-DD in built-in rules
@@ -1310,16 +1471,83 @@ enum PricingCatalog {
             if let minP = rule.minPromptTokens, promptTotal < minP { return false }
             return true
         } ?? candidateRules.first ?? fallbackRule
+    }
 
+    private static func computeCost(
+        rule: PricingRule,
+        inputTokens: Int,
+        cacheReadTokens: Int,
+        outputTokens: Int
+    ) -> (costUSD: Double, cacheSavingsUSD: Double) {
         let inp = Double(max(0, inputTokens))
         let cache = Double(max(0, cacheReadTokens))
         let out = Double(max(0, outputTokens))
 
-        let inpCost = (inp / 1_000_000.0) * matched.inputPerMillion
-        let cacheCost = (cache / 1_000_000.0) * matched.cacheReadPerMillion
-        let outCost = (out / 1_000_000.0) * matched.outputPerMillion
-        let savings = max(0, (cache / 1_000_000.0) * (matched.inputPerMillion - matched.cacheReadPerMillion))
+        let inpCost = (inp / 1_000_000.0) * rule.inputPerMillion
+        let cacheCost = (cache / 1_000_000.0) * rule.cacheReadPerMillion
+        let outCost = (out / 1_000_000.0) * rule.outputPerMillion
+        let savings = max(0, (cache / 1_000_000.0) * (rule.inputPerMillion - rule.cacheReadPerMillion))
         return (inpCost + cacheCost + outCost, savings)
+    }
+
+    static func estimateCostBreakdownUSD(
+        model rawModel: String,
+        inputTokens: Int,
+        cacheReadTokens: Int,
+        outputTokens: Int,
+        dateKey: String,
+        source: ResolvedPricingSource,
+        promptTokensForTier: Int? = nil
+    ) -> CostEstimateBreakdown {
+        let promptTotal = promptTokensForTier ?? (inputTokens + cacheReadTokens)
+        let candidateRules = resolveCandidateRules(rawModel: rawModel, source: source, promptTotal: promptTotal)
+        let matched = matchRule(in: candidateRules, dateKey: dateKey, promptTotal: promptTotal)
+        let actual = computeCost(
+            rule: matched,
+            inputTokens: inputTokens,
+            cacheReadTokens: cacheReadTokens,
+            outputTokens: outputTokens
+        )
+
+        var over200kPremiumUSD = 0.0
+        if promptTotal > 200_000 {
+            let baseRules = resolveCandidateRules(rawModel: rawModel, source: source, promptTotal: 200_000)
+            let baseMatched = matchRule(in: baseRules, dateKey: dateKey, promptTotal: 200_000)
+            let baseCost = computeCost(
+                rule: baseMatched,
+                inputTokens: inputTokens,
+                cacheReadTokens: cacheReadTokens,
+                outputTokens: outputTokens
+            ).costUSD
+            over200kPremiumUSD = max(0, actual.costUSD - baseCost)
+        }
+
+        return CostEstimateBreakdown(
+            costUSD: actual.costUSD,
+            cacheSavingsUSD: actual.cacheSavingsUSD,
+            over200kPremiumUSD: over200kPremiumUSD
+        )
+    }
+
+    static func estimateCostAndSavingsUSD(
+        model rawModel: String,
+        inputTokens: Int,
+        cacheReadTokens: Int,
+        outputTokens: Int,
+        dateKey: String,
+        source: ResolvedPricingSource,
+        promptTokensForTier: Int? = nil
+    ) -> (costUSD: Double, cacheSavingsUSD: Double) {
+        let breakdown = estimateCostBreakdownUSD(
+            model: rawModel,
+            inputTokens: inputTokens,
+            cacheReadTokens: cacheReadTokens,
+            outputTokens: outputTokens,
+            dateKey: dateKey,
+            source: source,
+            promptTokensForTier: promptTokensForTier
+        )
+        return (breakdown.costUSD, breakdown.cacheSavingsUSD)
     }
 }
 

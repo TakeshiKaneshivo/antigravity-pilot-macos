@@ -70,7 +70,8 @@ A **zero-intrusion**, 100% native macOS companion for Antigravity. Route Antigra
 - **No-TUN Local Proxy & 0.1s Hot-Update**: Routes Antigravity through your local SOCKS5/HTTP proxy via an isolated copy (7 presets, IPv4/IPv6, `NO_PROXY` LAN bypass), with instant port edits without rebuilding.
 - **3-Stage Health Check & Conflict Guard**: Live probe for TCP reachability, SOCKS5 handshake, and `generate_204` latency; validates the proxy before prompting and gracefully quitting running instances.
 - **100% Native Live Monitor**: Tracks context breakdown & step hierarchy, TTFT, generation speed, and dual-window (`5h` / `7d`) quota pools with Auto-Latest or pinned sessions.
-- **Usage Heatmap & Cost Estimates**: 20-week heatmap, 14-day trend, and Desktop + CLI attribution with auto-synced pricing and 4 Morandi chart presets (synced to the in-app dashboard).
+- **Usage Heatmap, Efficiency & Cost Ranking**: 20-week heatmap, 14-day trend, Desktop + CLI attribution, cache savings & `>200K` tiered premium analysis, and Cost (`$`) / Token ranking across Model / Project / Session views (synced with 4 Morandi palettes to the in-app dashboard).
+- **Long-Task Guardian & System Notifications**: 4 independent toggles in **Settings** (all on by default): automatic IOKit idle-sleep prevention while sessions run (display may sleep), task complete/error, input/approval needed, and quota pool recovery alerts via instant `hooks.json` + polling fallback.
 - **Menu Bar Companion & In-App Plugin**: Minimizes to the menu bar (customizable spinner, context, and `5h`/`7d` quota), sends native update alerts, and embeds a 0-token in-app dashboard.
 - **In-App Auto-Update & 4 Languages**: Direct/proxy SHA-256 self-updates, 3 copy icon styles (Badged / Original / Pilot), and 4-language UI (`简体中文` / `繁體中文` / `English` / `Русский`).
 
@@ -110,7 +111,7 @@ curl -fsSL https://raw.githubusercontent.com/TakeshiKaneshivo/antigravity-pilot-
 
 **Option B: Manual DMG download**
 
-Download `Antigravity-Pilot-v0.2.0-macOS13-universal.dmg` from [Releases](https://github.com/TakeshiKaneshivo/antigravity-pilot-macos/releases) (or see [Build from Source & Local Test](#build-from-source--local-test)), open the DMG, and drag `Antigravity Pilot.app` into `Applications`.
+Download `Antigravity-Pilot-v0.2.1-macOS13-universal.dmg` from [Releases](https://github.com/TakeshiKaneshivo/antigravity-pilot-macos/releases) (or see [Build from Source & Local Test](#build-from-source--local-test)), open the DMG, and drag `Antigravity Pilot.app` into `Applications`.
 
 > **Note**: Because the app is ad-hoc signed, if macOS reports **"is damaged and can't be opened"** or **"cannot be verified"** after a browser download, use Option A or clear quarantine in Terminal:
 >
@@ -173,8 +174,8 @@ rm -rf "$HOME/.gemini/config/plugins/antigravity-pilot"
 2. **Three-Channel No-TUN Proxy**: `libantigravity_proxy.dylib` (`__DATA,__interpose` + `198.18.0.0/15` FakeIP over SOCKS5), Go/Node env vars, and primary Chromium `--proxy-server` flags work together while bypassing LAN CIDRs via `NO_PROXY`.
 3. **0.1s Hot-Update & Single Dock Icon**: `AntigravityProxyLauncher` reads external `proxy.env` and replaces itself via `execv()`, so port edits only rewrite config without re-signing, while source SHA-256 hashes prevent false rebuilds after ad-hoc `codesign`.
 4. **Native Live Telemetry**: Discovers `~/.gemini/antigravity/daemon/hub_*.json` and queries proxy-free loopback Connect-RPC for context usage, performance metrics, and shared quota pools.
-5. **Incremental Usage & Cost Estimates**: Incrementally scans Desktop + CLI session logs into `usage_cache.json` by `size + mtime` and estimates API costs via auto-synced `pricing-catalog.json` (overridable via `custom_pricing.json`).
-6. **Official In-App Dashboard & ASAR Sync**: Serves a zero-JS, 0-token-refresh dashboard via official MCP Apps (SEP-1865), and updates `app.asar` + `ElectronAsarIntegrity` with 4-byte Chromium Pickle alignment when applying the Pilot icon.
+5. **Incremental Usage & Cost Estimates**: Incrementally scans Desktop + CLI session logs into `usage_cache.json` by `size + mtime` and computes API costs, cache savings, and `>200K` tiered premiums via auto-synced `pricing-catalog.json` (overridable via `custom_pricing.json`).
+6. **Official In-App Dashboard, Hooks & ASAR Sync**: Serves a zero-JS, 0-token-refresh dashboard via official MCP Apps (SEP-1865) alongside native lifecycle `hooks.json` for instant task alerts, and updates `app.asar` + `ElectronAsarIntegrity` with 4-byte Chromium Pickle alignment when applying the Pilot icon.
 
 ---
 
@@ -196,9 +197,9 @@ npm --prefix src/McpAppWeb run typecheck && ./build.sh --build-web --dmg
 ```
 
 - **Build flags**: `--native` builds for host arch only; `--clean` wipes `build/.cache` for a cold rebuild; `--notes-file <path>` supplies release notes.
-- **Env overrides**: `APP_VERSION` (`0.2.0`), `MIN_MACOS` (`13.0`), `ARCHS` (`"arm64 x86_64"`), and `GITHUB_REPO`.
+- **Env overrides**: `APP_VERSION` (`0.2.1`), `MIN_MACOS` (`13.0`), `ARCHS` (`"arm64 x86_64"`), and `GITHUB_REPO`.
 
-Outputs: `build/Antigravity Pilot.app`, `build/Antigravity-Pilot-v0.2.0-macOS13-universal.dmg`, `build/latest.json`, `build/antigravity-pilot-mcp`, `build/libantigravity_proxy.dylib`, `build/AntigravityProxyLauncher`, `build/test_client`.
+Outputs: `build/Antigravity Pilot.app`, `build/Antigravity-Pilot-v0.2.1-macOS13-universal.dmg`, `build/latest.json`, `build/antigravity-pilot-mcp`, `build/libantigravity_proxy.dylib`, `build/AntigravityProxyLauncher`, `build/test_client`.
 
 ### Automated Checks & Local SOCKS5 Test
 

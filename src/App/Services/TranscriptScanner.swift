@@ -357,7 +357,7 @@ enum TranscriptScanner {
         for cached in cache.files.values {
             for row in cached.rows {
                 let perReqPrompt = (row.inputTokens + row.cacheReadTokens) / max(1, row.requestCount)
-                let (rowCost, rowSavings) = PricingCatalog.estimateCostAndSavingsUSD(
+                let breakdown = PricingCatalog.estimateCostBreakdownUSD(
                     model: row.modelKey,
                     inputTokens: row.inputTokens,
                     cacheReadTokens: row.cacheReadTokens,
@@ -366,6 +366,12 @@ enum TranscriptScanner {
                     source: pricingSource,
                     promptTokensForTier: perReqPrompt
                 )
+                let rowCost = breakdown.costUSD
+                let rowSavings = breakdown.cacheSavingsUSD
+                let rowTotalTokens = row.inputTokens + row.cacheReadTokens + row.outputTokens
+                let rowOver200kReq = row.isOver200k ? row.requestCount : 0
+                let rowOver200kTok = row.isOver200k ? rowTotalTokens : 0
+                let rowOver200kPrem = row.isOver200k ? breakdown.over200kPremiumUSD : 0.0
 
                 let normModelKey = PricingCatalog.normalizeModelKey(row.modelKey, source: pricingSource)
                 let modelDisplay = PricingCatalog.displayName(for: normModelKey, source: pricingSource)
@@ -377,6 +383,9 @@ enum TranscriptScanner {
                     day.requestCount += row.requestCount
                     day.estimatedCostUSD += rowCost
                     day.cacheSavingsUSD += rowSavings
+                    day.over200kRequestCount += rowOver200kReq
+                    day.over200kTokens += rowOver200kTok
+                    day.over200kPremiumUSD += rowOver200kPrem
                     dailyMap[row.dateKey] = day
                 } else {
                     dailyMap[row.dateKey] = DailyUsageBucket(
@@ -386,7 +395,10 @@ enum TranscriptScanner {
                         outputTokens: row.outputTokens,
                         requestCount: row.requestCount,
                         estimatedCostUSD: rowCost,
-                        cacheSavingsUSD: rowSavings
+                        cacheSavingsUSD: rowSavings,
+                        over200kRequestCount: rowOver200kReq,
+                        over200kTokens: rowOver200kTok,
+                        over200kPremiumUSD: rowOver200kPrem
                     )
                 }
 
@@ -431,6 +443,9 @@ enum TranscriptScanner {
                         tot.requestCount += row.requestCount
                         tot.estimatedCostUSD += rowCost
                         tot.cacheSavingsUSD += rowSavings
+                        tot.over200kRequestCount += rowOver200kReq
+                        tot.over200kTokens += rowOver200kTok
+                        tot.over200kPremiumUSD += rowOver200kPrem
                         periodTotals[period] = tot
                     }
 
@@ -445,7 +460,10 @@ enum TranscriptScanner {
                             outputTokens: existing.outputTokens + row.outputTokens,
                             requestCount: existing.requestCount + row.requestCount,
                             estimatedCostUSD: existing.estimatedCostUSD + rowCost,
-                            cacheSavingsUSD: existing.cacheSavingsUSD + rowSavings
+                            cacheSavingsUSD: existing.cacheSavingsUSD + rowSavings,
+                            over200kRequestCount: existing.over200kRequestCount + rowOver200kReq,
+                            over200kTokens: existing.over200kTokens + rowOver200kTok,
+                            over200kPremiumUSD: existing.over200kPremiumUSD + rowOver200kPrem
                         )
                     } else {
                         modelMap[normModelKey] = ModelUsageSummary(
@@ -456,7 +474,10 @@ enum TranscriptScanner {
                             outputTokens: row.outputTokens,
                             requestCount: row.requestCount,
                             estimatedCostUSD: rowCost,
-                            cacheSavingsUSD: rowSavings
+                            cacheSavingsUSD: rowSavings,
+                            over200kRequestCount: rowOver200kReq,
+                            over200kTokens: rowOver200kTok,
+                            over200kPremiumUSD: rowOver200kPrem
                         )
                     }
                     periodModelMaps[period] = modelMap
@@ -475,7 +496,10 @@ enum TranscriptScanner {
                             requestCount: s.requestCount + row.requestCount,
                             sessionCount: existingProj.sessionIds.count,
                             estimatedCostUSD: s.estimatedCostUSD + rowCost,
-                            cacheSavingsUSD: s.cacheSavingsUSD + rowSavings
+                            cacheSavingsUSD: s.cacheSavingsUSD + rowSavings,
+                            over200kRequestCount: s.over200kRequestCount + rowOver200kReq,
+                            over200kTokens: s.over200kTokens + rowOver200kTok,
+                            over200kPremiumUSD: s.over200kPremiumUSD + rowOver200kPrem
                         )
                         projMap[projectKey] = existingProj
                     } else {
@@ -489,7 +513,10 @@ enum TranscriptScanner {
                                 requestCount: row.requestCount,
                                 sessionCount: 1,
                                 estimatedCostUSD: rowCost,
-                                cacheSavingsUSD: rowSavings
+                                cacheSavingsUSD: rowSavings,
+                                over200kRequestCount: rowOver200kReq,
+                                over200kTokens: rowOver200kTok,
+                                over200kPremiumUSD: rowOver200kPrem
                             ),
                             Set([sessionMapKey])
                         )
@@ -510,6 +537,9 @@ enum TranscriptScanner {
                             requestCount: existingSess.requestCount + row.requestCount,
                             estimatedCostUSD: existingSess.estimatedCostUSD + rowCost,
                             cacheSavingsUSD: existingSess.cacheSavingsUSD + rowSavings,
+                            over200kRequestCount: existingSess.over200kRequestCount + rowOver200kReq,
+                            over200kTokens: existingSess.over200kTokens + rowOver200kTok,
+                            over200kPremiumUSD: existingSess.over200kPremiumUSD + rowOver200kPrem,
                             lastDateKey: max(existingSess.lastDateKey, row.dateKey)
                         )
                     } else {
@@ -524,6 +554,9 @@ enum TranscriptScanner {
                             requestCount: row.requestCount,
                             estimatedCostUSD: rowCost,
                             cacheSavingsUSD: rowSavings,
+                            over200kRequestCount: rowOver200kReq,
+                            over200kTokens: rowOver200kTok,
+                            over200kPremiumUSD: rowOver200kPrem,
                             lastDateKey: row.dateKey
                         )
                     }
@@ -542,10 +575,24 @@ enum TranscriptScanner {
             sortedModelsByPeriod[period] = modelVals.sorted { $0.totalTokens > $1.totalTokens }
 
             let projVals = periodProjectMaps[period].map { $0.values.map(\.summary) } ?? []
-            sortedProjectsByPeriod[period] = Array(projVals.sorted { $0.totalTokens > $1.totalTokens }.prefix(25))
+            sortedProjectsByPeriod[period] = mergeTopByCostAndTokens(
+                projVals,
+                costOf: \.estimatedCostUSD,
+                tokensOf: \.totalTokens,
+                idOf: \.projectKey,
+                eachCap: 30,
+                maxTotal: 50
+            )
 
             let sessVals = periodSessionMaps[period].map { Array($0.values) } ?? []
-            sortedSessionsByPeriod[period] = Array(sessVals.sorted { $0.totalTokens > $1.totalTokens }.prefix(30))
+            sortedSessionsByPeriod[period] = mergeTopByCostAndTokens(
+                sessVals,
+                costOf: \.estimatedCostUSD,
+                tokensOf: \.totalTokens,
+                idOf: \.id,
+                eachCap: 30,
+                maxTotal: 50
+            )
         }
 
         return UsageHistorySnapshot(
@@ -559,6 +606,38 @@ enum TranscriptScanner {
             cliArchiveCount: cliArchiveCount,
             scannedAt: Date()
         )
+    }
+
+    private static func mergeTopByCostAndTokens<T>(
+        _ items: [T],
+        costOf: (T) -> Double,
+        tokensOf: (T) -> Int,
+        idOf: (T) -> String,
+        eachCap: Int,
+        maxTotal: Int
+    ) -> [T] {
+        let byCost = items.sorted {
+            let c0 = costOf($0)
+            let c1 = costOf($1)
+            if abs(c0 - c1) > 1e-9 { return c0 > c1 }
+            return tokensOf($0) > tokensOf($1)
+        }
+        let byTokens = items.sorted { tokensOf($0) > tokensOf($1) }
+
+        var seen = Set<String>()
+        var merged: [T] = []
+        for item in byCost.prefix(eachCap) {
+            if seen.insert(idOf(item)).inserted {
+                merged.append(item)
+            }
+        }
+        for item in byTokens.prefix(eachCap) {
+            if merged.count >= maxTotal { break }
+            if seen.insert(idOf(item)).inserted {
+                merged.append(item)
+            }
+        }
+        return Array(merged.prefix(maxTotal))
     }
 
     private static func makeLocalDayFormatter() -> DateFormatter {

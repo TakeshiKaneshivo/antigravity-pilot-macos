@@ -47,27 +47,72 @@ final class BuilderAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
     let monitorStore = MonitorStore()
     let updateStore = UpdateStore()
     let antigravityUpdateStore = AntigravityUpdateStore()
+    let powerAssertionService = PowerAssertionService()
     private let notificationService = SystemNotificationService.shared
     private var statusBarController: StatusBarController?
     private weak var mainWindow: NSWindow?
     private var mainWindowMouseDownMonitor: Any?
     private var cancellables = Set<AnyCancellable>()
+    private var lastConsumedHookEpoch: Double = Date().timeIntervalSince1970
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         appModel.load()
         monitorStore.start()
         let appSupport = appModel.support
-        notificationService.configure { [weak self] in
-            self?.showMainWindow()
-        }
+        notificationService.configure(
+            onOpenMainWindow: { [weak self] in
+                self?.showMainWindow()
+            },
+            onOpenMonitorTab: { [weak self] in
+                self?.appModel.requestOpenTab(.monitor)
+                self?.showMainWindow()
+            }
+        )
         SystemNotificationService.writePIDFile(at: appSupport.pilotPIDURL)
         notificationService.startDarwinListener { [weak self] in
             guard let self else { return }
             self.appModel.refreshRuntimeStatus()
             self.notificationService.postRuntimeUpdateNeeded(language: self.appModel.config.appLanguage)
         }
-        if FileManager.default.fileExists(atPath: appSupport.runtimeApp.path) {
+        notificationService.startHookEventDarwinListener { [weak self] in
+            self?.handleHookEvents()
+        }
+        if FileManager.default.fileExists(atPath: appSupport.runtimeApp.path)
+            || appModel.config.notifyOnTaskComplete
+            || appModel.config.notifyOnApprovalNeeded
+            || appModel.config.notifyOnQuotaRecovered {
             notificationService.requestAuthorizationIfNeeded()
+        }
+
+        monitorStore.onQuotaRecovered = { [weak self] event in
+            guard let self else { return }
+            self.notificationService.postQuotaRecovered(
+                poolTitle: event.poolTitle,
+                windowKind: event.windowKind,
+                remainingPercent: event.remainingPercent,
+                config: self.appModel.config
+            )
+        }
+        monitorStore.onSessionCompletedFallback = { [weak self] session in
+            guard let self else { return }
+            self.notificationService.postTaskFinished(
+                conversationId: session.id,
+                title: session.title,
+                workspaceName: session.workspaceName,
+                isError: false,
+                errorDetail: nil,
+                config: self.appModel.config
+            )
+        }
+        monitorStore.onSessionApprovalFallback = { [weak self] session in
+            guard let self else { return }
+            self.notificationService.postApprovalNeeded(
+                conversationId: session.id,
+                title: session.title,
+                workspaceName: session.workspaceName,
+                detail: nil,
+                config: self.appModel.config
+            )
         }
         if FileManager.default.fileExists(atPath: appSupport.externalProxyEnvURL.path),
            let currentPilotPath = RuntimeBuilder.currentPilotAppPath(),
@@ -105,6 +150,7 @@ final class BuilderAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
             monitorStore: monitorStore,
             updateStore: updateStore,
             antigravityUpdateStore: antigravityUpdateStore,
+            powerAssertionService: powerAssertionService,
             onOpenMainWindow: { [weak self] in self?.showMainWindow() },
             onOpenUpdatePopover: { [weak self] in
                 self?.showMainWindow()
@@ -117,10 +163,26 @@ final class BuilderAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
         appModel.$config
             .receive(on: DispatchQueue.main)
             .sink { [weak self] config in
-                self?.statusBarController?.updateVisibilityAndTitle()
+                guard let self else { return }
+                self.statusBarController?.updateVisibilityAndTitle()
+                self.powerAssertionService.sync(
+                    enabled: config.preventSleepWhileRunning,
+                    activeRunningCount: self.monitorStore.activeRunningSessionCount
+                )
                 if !config.enableMenuBarMonitor {
                     NSApp.setActivationPolicy(.regular)
                 }
+            }
+            .store(in: &cancellables)
+
+        monitorStore.$activeRunningSessionCount
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] runningCount in
+                guard let self else { return }
+                self.powerAssertionService.sync(
+                    enabled: self.appModel.config.preventSleepWhileRunning,
+                    activeRunningCount: runningCount
+                )
             }
             .store(in: &cancellables)
 
@@ -136,6 +198,53 @@ final class BuilderAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
         registerMainWindowIfNeeded()
     }
 
+    private func handleHookEvents() {
+        let result = PilotHookProcessor.drainUnconsumedEvents(
+            from: appModel.support.hookEventsURL,
+            sinceEpoch: lastConsumedHookEpoch
+        )
+        if result.latestEpoch > lastConsumedHookEpoch {
+            lastConsumedHookEpoch = result.latestEpoch
+        }
+        guard !result.events.isEmpty else { return }
+        let config = appModel.config
+        let sessionById = Dictionary(uniqueKeysWithValues: monitorStore.sessions.map { ($0.id.lowercased(), $0) })
+
+        for ev in result.events {
+            let matchedSession = ev.conversationId.isEmpty ? nil : sessionById[ev.conversationId.lowercased()]
+            let title = matchedSession?.title ?? ev.summary
+            let ws = matchedSession?.workspaceName ?? ev.workspaceName
+            switch ev.kind {
+            case .taskCompleted:
+                notificationService.postTaskFinished(
+                    conversationId: ev.conversationId,
+                    title: title,
+                    workspaceName: ws,
+                    isError: false,
+                    errorDetail: nil,
+                    config: config
+                )
+            case .taskErrored:
+                notificationService.postTaskFinished(
+                    conversationId: ev.conversationId,
+                    title: title,
+                    workspaceName: ws,
+                    isError: true,
+                    errorDetail: ev.errorDetail,
+                    config: config
+                )
+            case .approvalNeeded:
+                notificationService.postApprovalNeeded(
+                    conversationId: ev.conversationId,
+                    title: title,
+                    workspaceName: ws,
+                    detail: ev.summary,
+                    config: config
+                )
+            }
+        }
+    }
+
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         showMainWindow()
         return true
@@ -146,6 +255,7 @@ final class BuilderAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        powerAssertionService.releaseIfNeeded()
         notificationService.stopDarwinListener()
         SystemNotificationService.removePIDFileIfOwned(at: appModel.support.pilotPIDURL)
         if let monitor = mainWindowMouseDownMonitor {
@@ -312,6 +422,7 @@ final class StatusBarController: NSObject, NSPopoverDelegate, NSMenuDelegate {
         monitorStore: MonitorStore,
         updateStore: UpdateStore,
         antigravityUpdateStore: AntigravityUpdateStore,
+        powerAssertionService: PowerAssertionService,
         onOpenMainWindow: @escaping () -> Void,
         onOpenUpdatePopover: @escaping () -> Void,
         onQuit: @escaping () -> Void
@@ -333,6 +444,7 @@ final class StatusBarController: NSObject, NSPopoverDelegate, NSMenuDelegate {
                 monitorStore: monitorStore,
                 updateStore: updateStore,
                 antigravityUpdateStore: antigravityUpdateStore,
+                powerAssertionService: powerAssertionService,
                 onOpenMainWindow: onOpenMainWindow,
                 onOpenUpdatePopover: onOpenUpdatePopover,
                 onClosePopover: { [weak self] in self?.closePopover() },
@@ -2493,6 +2605,148 @@ enum SmokeTestRunner {
                 && L10n.t("已连接", "Connected", .zhHant) == "已連線"
                 && L10n.t("已连接", "Connected", .ru) == "Подключён",
             "L10n resolves Running and Connected in zh-Hant and ru"
+        )
+
+        // 39. PricingCatalog >200K tiered premium breakdown
+        let tierBreak = PricingCatalog.estimateCostBreakdownUSD(
+            model: "gemini-3.1-pro",
+            inputTokens: 250_000,
+            cacheReadTokens: 0,
+            outputTokens: 0,
+            dateKey: "2026-11-28",
+            source: .empty,
+            promptTokensForTier: 250_000
+        )
+        let baseBreak = PricingCatalog.estimateCostBreakdownUSD(
+            model: "gemini-3.1-pro",
+            inputTokens: 150_000,
+            cacheReadTokens: 0,
+            outputTokens: 0,
+            dateKey: "2026-11-28",
+            source: .empty,
+            promptTokensForTier: 150_000
+        )
+        let flatBreak = PricingCatalog.estimateCostBreakdownUSD(
+            model: "gemini-4-neon",
+            inputTokens: 250_000,
+            cacheReadTokens: 0,
+            outputTokens: 0,
+            dateKey: "2026-11-28",
+            source: .empty,
+            promptTokensForTier: 250_000
+        )
+        check(
+            abs(tierBreak.over200kPremiumUSD - 0.50) < 0.001
+                && abs(baseBreak.over200kPremiumUSD) < 0.0001
+                && abs(flatBreak.over200kPremiumUSD) < 0.0001,
+            "PricingCatalog computes >200K tiered premium accurately without false positives on flat models"
+        )
+
+        // 40. TranscriptScanner aggregates over200k metrics & cache savings
+        let scanTmpDir = FileManager.default.temporaryDirectory.appendingPathComponent("pilot-scan-200k-\(UUID().uuidString)", isDirectory: true)
+        let brainSessDir = scanTmpDir.appendingPathComponent("brain/sess-200k/.system_generated/logs", isDirectory: true)
+        try? FileManager.default.createDirectory(at: brainSessDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: scanTmpDir) }
+        let isoNow = ISO8601DateFormatter()
+        isoNow.formatOptions = [.withInternetDateTime]
+        let nowDateStr = isoNow.string(from: Date())
+        let line1 = "{\"step_index\":1,\"type\":\"PLANNER_RESPONSE\",\"created_at\":\"\(nowDateStr)\",\"model\":\"gemini-3.1-pro\",\"input_tokens\":100000,\"cache_read_tokens\":150000,\"output_tokens\":1000}\n"
+        try? Data(line1.utf8).write(to: brainSessDir.appendingPathComponent("transcript.jsonl"))
+        let scannedSnap = TranscriptScanner.scan(
+            brainDir: scanTmpDir.appendingPathComponent("brain"),
+            cacheURL: scanTmpDir.appendingPathComponent("usage_cache.json"),
+            customPricingURL: nil
+        )
+        let allTot = scannedSnap.totalsByPeriod[.all]
+        check(
+            (allTot?.over200kRequestCount ?? 0) == 1
+                && (allTot?.over200kTokens ?? 0) == 251_000
+                && (allTot?.over200kPremiumUSD ?? 0) > 0.1
+                && (allTot?.cacheSavingsUSD ?? 0) > 0.1,
+            "TranscriptScanner aggregates over200k counts, tokens, premium USD, and cache savings"
+        )
+
+        // 41. QuotaRecoveryEvaluator state machine & cooldown
+        let lowPool = QuotaPoolGroup(
+            id: "pool1",
+            title: "Gemini Pro",
+            remainingFraction: 0.15,
+            resetTime: nil,
+            models: [],
+            buckets: [QuotaWindowBucket(id: "b1", windowKind: .fiveHour, displayName: "5h", remainingFraction: 0.15, resetTime: nil, resetTimeISO: nil, description: nil)]
+        )
+        let highPool = QuotaPoolGroup(
+            id: "pool1",
+            title: "Gemini Pro",
+            remainingFraction: 0.95,
+            resetTime: nil,
+            models: [],
+            buckets: [QuotaWindowBucket(id: "b1", windowKind: .fiveHour, displayName: "5h", remainingFraction: 0.95, resetTime: nil, resetTimeISO: nil, description: nil)]
+        )
+        let quotaT0 = Date(timeIntervalSince1970: 1_700_000_000)
+        let step1 = QuotaRecoveryEvaluator.evaluate(previous: [:], pools: [lowPool], now: quotaT0)
+        let step2 = QuotaRecoveryEvaluator.evaluate(previous: step1.nextState, pools: [highPool], now: quotaT0.addingTimeInterval(60))
+        let step3 = QuotaRecoveryEvaluator.evaluate(previous: step2.nextState, pools: [lowPool], now: quotaT0.addingTimeInterval(120))
+        let step4 = QuotaRecoveryEvaluator.evaluate(previous: step3.nextState, pools: [highPool], now: quotaT0.addingTimeInterval(180))
+        check(
+            step1.events.isEmpty
+                && step2.events.count == 1
+                && step2.events[0].remainingPercent == 95
+                && step4.events.isEmpty,
+            "QuotaRecoveryEvaluator triggers once on low->recovered transition and respects cooldown"
+        )
+
+        // 42. PilotHookProcessor stdin parsing & PreToolUse safety gate
+        let stopOkData = Data("{\"conversationId\":\"c1\",\"workspacePaths\":[\"/tmp/my-repo\"],\"terminationReason\":\"NO_TOOL_CALL\",\"fullyIdle\":true,\"continuationActive\":false}".utf8)
+        let stopCancelData = Data("{\"conversationId\":\"c1\",\"terminationReason\":\"USER_CANCELED\",\"fullyIdle\":true}".utf8)
+        let stopErrData = Data("{\"conversationId\":\"c2\",\"terminationReason\":\"ERROR\",\"error\":\"timeout\",\"fullyIdle\":true}".utf8)
+        let askData = Data("{\"conversationId\":\"c3\",\"toolCall\":{\"name\":\"ask_question\",\"args\":{\"questions\":[{\"question\":\"Proceed?\"}]}}}".utf8)
+        let cmdData = Data("{\"conversationId\":\"c4\",\"toolCall\":{\"name\":\"run_command\",\"args\":{\"CommandLine\":\"rm -rf /\"}}}".utf8)
+        let rStopOk = PilotHookProcessor.parseHookStdin(stopOkData, mode: .stop)
+        let rStopCancel = PilotHookProcessor.parseHookStdin(stopCancelData, mode: .stop)
+        let rStopErr = PilotHookProcessor.parseHookStdin(stopErrData, mode: .stop)
+        let rAsk = PilotHookProcessor.parseHookStdin(askData, mode: .preTool)
+        let rCmd = PilotHookProcessor.parseHookStdin(cmdData, mode: .preTool)
+        check(
+            rStopOk.event?.kind == .taskCompleted && rStopOk.event?.workspaceName == "my-repo" && rStopOk.stdoutJSON == "{}"
+                && rStopCancel.event == nil
+                && rStopErr.event?.kind == .taskErrored
+                && rAsk.event?.kind == .approvalNeeded && rAsk.stdoutJSON.contains("allow")
+                && rCmd.event == nil && rCmd.stdoutJSON == "{}",
+            "PilotHookProcessor parses Stop & ask_question hooks and never allows arbitrary run_command"
+        )
+
+        // 43. ProxyConfig backward-compatible decoding defaults new guardian toggles to true
+        let legacyCfgData = Data("{\"host\":\"127.0.0.1\",\"hookPort\":7890,\"envScheme\":\"http\",\"envPort\":7890}".utf8)
+        let decodedLegacyCfg = try? JSONDecoder().decode(ProxyConfig.self, from: legacyCfgData)
+        check(
+            decodedLegacyCfg?.preventSleepWhileRunning == true
+                && decodedLegacyCfg?.notifyOnTaskComplete == true
+                && decodedLegacyCfg?.notifyOnApprovalNeeded == true
+                && decodedLegacyCfg?.notifyOnQuotaRecovered == true
+                && decodedLegacyCfg?.notifyOnlyWhenBackground == true,
+            "ProxyConfig decodes legacy JSON with all 5 guardian/notification toggles defaulting to true"
+        )
+
+        // 44. McpPluginInstaller deploys valid hooks.json with cleared DYLD_INSERT_LIBRARIES
+        let pluginTmpDir = FileManager.default.temporaryDirectory.appendingPathComponent("pilot-plugin-test-\(UUID().uuidString)", isDirectory: true)
+        let fakeBundleRes = pluginTmpDir.appendingPathComponent("res", isDirectory: true)
+        let fakePluginsRoot = pluginTmpDir.appendingPathComponent("plugins", isDirectory: true)
+        try? FileManager.default.createDirectory(at: fakeBundleRes, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: pluginTmpDir) }
+        try? Data("echo ok".utf8).write(to: fakeBundleRes.appendingPathComponent("antigravity-pilot-mcp"))
+        try? Data("<html></html>".utf8).write(to: fakeBundleRes.appendingPathComponent("pilot-mcp-dashboard.html"))
+        let testSupport = AppSupport(rootOverride: pluginTmpDir.appendingPathComponent("support"), pluginsRoot: fakePluginsRoot)
+        let hookPluginInstaller = McpPluginInstaller(support: testSupport, resourceBaseURL: fakeBundleRes)
+        try? hookPluginInstaller.installOrUpdate(appVersion: "0.3.0", language: .en)
+        let installedHooksURL = testSupport.mcpPluginDirectory.appendingPathComponent("hooks.json")
+        let installedHooksText = (try? String(contentsOf: installedHooksURL, encoding: .utf8)) ?? ""
+        check(
+            FileManager.default.fileExists(atPath: installedHooksURL.path)
+                && installedHooksText.contains("DYLD_INSERT_LIBRARIES=")
+                && installedHooksText.contains("ask_question")
+                && hookPluginInstaller.status(bundledVersion: "0.3.0") == .installedCurrent(version: "0.3.0"),
+            "McpPluginInstaller writes valid hooks.json and verifies status"
         )
 
         exit(tracker.hasFailed ? 1 : 0)

@@ -160,6 +160,9 @@ interface DailyBucketDTO {
   requestCount: number;
   estimatedCostUSD: number;
   cacheSavingsUSD?: number;
+  over200kRequestCount?: number;
+  over200kTokens?: number;
+  over200kPremiumUSD?: number;
 }
 
 interface HeatmapCellDTO {
@@ -180,6 +183,9 @@ interface ModelUsageDTO {
   requestCount: number;
   estimatedCostUSD: number;
   cacheSavingsUSD?: number;
+  over200kRequestCount?: number;
+  over200kTokens?: number;
+  over200kPremiumUSD?: number;
 }
 
 interface ProjectUsageDTO {
@@ -193,6 +199,9 @@ interface ProjectUsageDTO {
   sessionCount: number;
   estimatedCostUSD: number;
   cacheSavingsUSD?: number;
+  over200kRequestCount?: number;
+  over200kTokens?: number;
+  over200kPremiumUSD?: number;
 }
 
 interface SessionUsageDTO {
@@ -207,6 +216,9 @@ interface SessionUsageDTO {
   requestCount: number;
   estimatedCostUSD: number;
   cacheSavingsUSD?: number;
+  over200kRequestCount?: number;
+  over200kTokens?: number;
+  over200kPremiumUSD?: number;
   lastDateKey: string;
 }
 
@@ -234,6 +246,7 @@ interface AppState {
   activeTab: TabKey;
   selectedPeriod: PeriodKey;
   breakdownDim: BreakdownDim;
+  breakdownSort: 'cost' | 'tokens';
   pinnedCascadeId: string | null;
   displayedCascadeId: string | null;
   selectedHeatmapDate: string | null;
@@ -284,6 +297,7 @@ const state: AppState = {
   activeTab: 'monitor',
   selectedPeriod: 'days30',
   breakdownDim: 'model',
+  breakdownSort: 'cost',
   pinnedCascadeId: null,
   displayedCascadeId: null,
   selectedHeatmapDate: null,
@@ -373,7 +387,7 @@ function collapseChevron(cardId: string, collapsed: boolean): string {
   return `<button type="button" class="collapse-btn" data-action="toggle-card" data-card-id="${escapeHtml(cardId)}" aria-expanded="${collapsed ? 'false' : 'true'}" title="${collapsed ? tr('展开面板', 'Expand panel') : tr('收起面板', 'Collapse panel')}">▾</button>`;
 }
 
-const app = new App({ name: 'Antigravity Pilot', version: '0.2.0' }, {});
+const app = new App({ name: 'Antigravity Pilot', version: '0.2.1' }, {});
 
 type HostStyleVariables = Parameters<typeof applyHostStyleVariables>[0];
 
@@ -1098,6 +1112,12 @@ function resolveTierCostSubtitle(usage: UsageHistoryDTO, totalCostUSD: number): 
   return tr('参考 API 公开单价', 'Est. via public API pricing');
 }
 
+function compactBadgeUSD(value: number): string {
+  if (value >= 100) return `$${Math.round(value)}`;
+  if (value >= 10) return `$${value.toFixed(1)}`;
+  return `$${value.toFixed(2)}`;
+}
+
 function renderUsageTab(usage: UsageHistoryDTO | null): string {
   if (!usage) {
     return `<div class="card empty-box">${tr('正在加载本地会话用量归档…', 'Loading local session usage archives…')}</div>`;
@@ -1113,6 +1133,9 @@ function renderUsageTab(usage: UsageHistoryDTO | null): string {
     requestCount: 0,
     estimatedCostUSD: 0,
     cacheSavingsUSD: 0,
+    over200kRequestCount: 0,
+    over200kTokens: 0,
+    over200kPremiumUSD: 0,
   };
   const models = usage.modelSummariesByPeriod[period] ?? [];
   const projects = usage.projectSummariesByPeriod?.[period] ?? [];
@@ -1127,14 +1150,34 @@ function renderUsageTab(usage: UsageHistoryDTO | null): string {
     `Кэш ${compactTokens(total.cacheReadTokens)}`
   );
   const cacheSaved = total.cacheSavingsUSD ?? 0;
-  const cacheSub = cacheSaved >= 0.005
-    ? tr4(
-        `${cacheBaseSub} · 省 ${formatUSD(cacheSaved)}`,
-        `${cacheBaseSub} · 省 ${formatUSD(cacheSaved)}`,
-        `${cacheBaseSub} · Saved ${formatUSD(cacheSaved)}`,
-        `${cacheBaseSub} · Эк. ${formatUSD(cacheSaved)}`
-      )
-    : cacheBaseSub;
+  const grossCost = total.estimatedCostUSD + cacheSaved;
+  const discountPct = grossCost > 0 ? Math.round((cacheSaved / grossCost) * 100) : 0;
+  const cacheBadge = cacheSaved >= 0.005 ? `<span class="kpi-badge good">-${compactBadgeUSD(cacheSaved)}</span>` : '';
+
+  const overReqs = total.over200kRequestCount ?? 0;
+  const overRatePct = total.requestCount > 0 ? Math.round((overReqs / total.requestCount) * 100) : 0;
+  const overPrem = total.over200kPremiumUSD ?? 0;
+  const callsBadge = overReqs > 0 ? `<span class="kpi-badge warn">&gt;200K ${overRatePct > 0 ? `${overRatePct}%` : ''}</span>` : '';
+
+  const periodLabels = getPeriodLabels();
+  const periodLabel = periodLabels.find((p) => p.key === period)?.label ?? period;
+  const callsSub = overPrem >= 0.005
+    ? `&gt;200K +${formatUSD(overPrem)}`
+    : overReqs > 0
+      ? `${overReqs} &gt;200K`
+      : tr4(
+          `${periodLabel} PLANNER 轮次`,
+          `${periodLabel} PLANNER 輪次`,
+          `${periodLabel} turns`,
+          `${periodLabel} шагов`
+        );
+
+  const topCostProject = [...projects].sort((a, b) => b.estimatedCostUSD - a.estimatedCostUSD)[0];
+  const topProjName = topCostProject
+    ? (topCostProject.projectKey === '__unassigned__'
+        ? tr4('未绑定工作区', '未綁定工作區', 'Unassigned Workspace', 'Без проекта')
+        : topCostProject.displayName)
+    : null;
 
   const costSub = resolveTierCostSubtitle(usage, total.estimatedCostUSD);
 
@@ -1155,9 +1198,6 @@ function renderUsageTab(usage: UsageHistoryDTO | null): string {
 
   const recent = usage.recent14Days ?? [];
   const hoveredDay = recent.find((d) => d.dateKey === state.hoveredBarDate) ?? null;
-
-  const periodLabels = getPeriodLabels();
-  const periodLabel = periodLabels.find((p) => p.key === period)?.label ?? period;
 
   const cliCount = usage.cliArchiveCount ?? 0;
   const deskCount = usage.desktopArchiveCount ?? usage.scannedFilesCount;
@@ -1188,26 +1228,21 @@ function renderUsageTab(usage: UsageHistoryDTO | null): string {
           <div class="kpi-title">${tr('总消耗 Token', 'Total Tokens')}</div>
           <div class="kpi-value">${compactTokens(total.totalTokens)}</div>
           <div class="kpi-sub">${tr4(
-            `输入 ${compactTokens(total.inputTokens)} · 输出 ${compactTokens(total.outputTokens)}`,
-            `輸入 ${compactTokens(total.inputTokens)} · 輸出 ${compactTokens(total.outputTokens)}`,
+            `入 ${compactTokens(total.inputTokens)} · 出 ${compactTokens(total.outputTokens)}`,
+            `入 ${compactTokens(total.inputTokens)} · 出 ${compactTokens(total.outputTokens)}`,
             `In ${compactTokens(total.inputTokens)} · Out ${compactTokens(total.outputTokens)}`,
             `Вх ${compactTokens(total.inputTokens)} · Вых ${compactTokens(total.outputTokens)}`
           )}</div>
         </div>
         <div class="kpi-card">
           <div class="kpi-title">${tr('缓存命中率', 'Cache Hit Rate')}</div>
-          <div class="kpi-value">${cacheRate}%</div>
-          <div class="kpi-sub">${cacheSub}</div>
+          <div class="kpi-value-row"><span class="kpi-value">${cacheRate}%</span>${cacheBadge}</div>
+          <div class="kpi-sub">${cacheBaseSub}</div>
         </div>
         <div class="kpi-card">
           <div class="kpi-title">${tr('模型调用次数', 'Model Calls')}</div>
-          <div class="kpi-value">${total.requestCount}</div>
-          <div class="kpi-sub">${tr4(
-            `${periodLabel} PLANNER 轮次`,
-            `${periodLabel} PLANNER 輪次`,
-            `${periodLabel} turns`,
-            `${periodLabel} шагов`
-          )}</div>
+          <div class="kpi-value-row"><span class="kpi-value">${total.requestCount}</span>${callsBadge}</div>
+          <div class="kpi-sub">${callsSub}</div>
         </div>
         <div class="kpi-card">
           <div class="kpi-title">${tr('估算 API 账单', 'Est. API Cost')}</div>
@@ -1215,6 +1250,31 @@ function renderUsageTab(usage: UsageHistoryDTO | null): string {
           <div class="kpi-sub">${costSub}</div>
         </div>
       </div>
+
+      ${(cacheSaved >= 0.005 || overReqs > 0 || topProjName) ? `
+        <div class="insight-strip">
+          ${cacheSaved >= 0.005 ? `
+            <span class="insight-item">
+              <span class="tag-badge good">${tr4(`缓存省 ${formatUSD(cacheSaved)}`, `快取省 ${formatUSD(cacheSaved)}`, `Saved ${formatUSD(cacheSaved)}`, `Кэш -${formatUSD(cacheSaved)}`)}</span>
+              <span class="muted">${tr4(`原价 ${formatUSD(grossCost)}（省 ${discountPct}%）`, `原價 ${formatUSD(grossCost)}（省 ${discountPct}%）`, `Gross ${formatUSD(grossCost)} (${discountPct}% off)`, `Без кэша ${formatUSD(grossCost)} (-${discountPct}%)`)}</span>
+            </span>
+          ` : ''}
+          ${overReqs > 0 ? `
+            <span class="insight-item">
+              <span class="tag-badge warn">&gt;200K · ${overReqs} (${overRatePct}%)</span>
+              <span class="muted">${overPrem >= 0.005
+                ? tr4(`阶梯溢价 +${formatUSD(overPrem)}`, `階梯溢價 +${formatUSD(overPrem)}`, `Tiered +${formatUSD(overPrem)}`, `Доплата +${formatUSD(overPrem)}`)
+                : tr4(`${compactTokens(total.over200kTokens ?? 0)} 长上下文`, `${compactTokens(total.over200kTokens ?? 0)} 長上下文`, `${compactTokens(total.over200kTokens ?? 0)} long prompt`, `${compactTokens(total.over200kTokens ?? 0)} длинный промпт`)}</span>
+            </span>
+          ` : ''}
+          ${topCostProject && topProjName ? `
+            <button type="button" class="insight-jump" data-action="jump-top-project">
+              <span>${tr4(`最耗费项目：${escapeHtml(topProjName)}`, `最耗費專案：${escapeHtml(topProjName)}`, `Top Project: ${escapeHtml(topProjName)}`, `Топ проект: ${escapeHtml(topProjName)}`)}</span>
+              <strong>${formatUSD(topCostProject.estimatedCostUSD)}</strong>
+            </button>
+          ` : ''}
+        </div>
+      ` : ''}
 
       <div class="card ${heatmapCollapsed ? 'is-collapsed' : ''}">
         <div class="card-header collapsible-header" data-collapse-card="heatmap">
@@ -1287,12 +1347,16 @@ function renderUsageTab(usage: UsageHistoryDTO | null): string {
 
       <div class="card ${modelsCollapsed ? 'is-collapsed' : ''}">
         <div class="card-header collapsible-header" data-collapse-card="models">
-          <div class="card-title-group">
+          <div class="card-title-group" style="flex-wrap:wrap;">
             ${collapseChevron('models', modelsCollapsed)}
             <div class="segmented" style="margin-left:2px;">
               <button type="button" data-action="breakdown-dim" data-dim="model" class="${state.breakdownDim === 'model' ? 'active' : ''}">${tr('按模型', 'By Model')}</button>
               <button type="button" data-action="breakdown-dim" data-dim="project" class="${state.breakdownDim === 'project' ? 'active' : ''}">${tr('按项目', 'By Project')}</button>
               <button type="button" data-action="breakdown-dim" data-dim="session" class="${state.breakdownDim === 'session' ? 'active' : ''}">${tr('按会话', 'By Session')}</button>
+            </div>
+            <div class="segmented">
+              <button type="button" data-action="breakdown-sort" data-sort="cost" class="${state.breakdownSort === 'cost' ? 'active' : ''}">$</button>
+              <button type="button" data-action="breakdown-sort" data-sort="tokens" class="${state.breakdownSort === 'tokens' ? 'active' : ''}">Tok</button>
             </div>
           </div>
           <span class="muted">${tr('参考 API 定价估算，非实际扣费', 'Estimated via API pricing, not actual billing')}</span>
@@ -1304,6 +1368,9 @@ function renderUsageTab(usage: UsageHistoryDTO | null): string {
                 displayName: m.displayName,
                 totalTokens: m.totalTokens,
                 estimatedCostUSD: m.estimatedCostUSD,
+                cacheSavingsUSD: m.cacheSavingsUSD ?? 0,
+                over200kRequestCount: m.over200kRequestCount ?? 0,
+                over200kPremiumUSD: m.over200kPremiumUSD ?? 0,
               })), tr('所选周期暂无模型调用记录。', 'No model usage recorded in this period.'))
             : state.breakdownDim === 'project'
               ? renderDonutBreakdown(projects.map((p) => ({
@@ -1313,6 +1380,10 @@ function renderUsageTab(usage: UsageHistoryDTO | null): string {
                     : p.displayName,
                   totalTokens: p.totalTokens,
                   estimatedCostUSD: p.estimatedCostUSD,
+                  cacheSavingsUSD: p.cacheSavingsUSD ?? 0,
+                  sessionCount: p.sessionCount,
+                  over200kRequestCount: p.over200kRequestCount ?? 0,
+                  over200kPremiumUSD: p.over200kPremiumUSD ?? 0,
                 })), tr('所选周期暂无项目用量记录。', 'No project usage recorded in this period.'))
               : renderSessionBreakdown(sessions)}
         </div>
@@ -1372,6 +1443,10 @@ interface DonutItem {
   displayName: string;
   totalTokens: number;
   estimatedCostUSD: number;
+  cacheSavingsUSD?: number;
+  sessionCount?: number;
+  over200kRequestCount?: number;
+  over200kPremiumUSD?: number;
 }
 
 function renderDonutBreakdown(items: DonutItem[], emptyText: string): string {
@@ -1379,12 +1454,22 @@ function renderDonutBreakdown(items: DonutItem[], emptyText: string): string {
     return `<div class="muted">${escapeHtml(emptyText)}</div>`;
   }
 
+  const sorted = [...items].sort((a, b) => {
+    if (state.breakdownSort === 'cost') {
+      if (Math.abs(a.estimatedCostUSD - b.estimatedCostUSD) > 1e-9) {
+        return b.estimatedCostUSD - a.estimatedCostUSD;
+      }
+      return b.totalTokens - a.totalTokens;
+    }
+    return b.totalTokens - a.totalTokens;
+  });
+
   let displayed: DonutItem[];
-  if (items.length <= 6) {
-    displayed = items;
+  if (sorted.length <= 6) {
+    displayed = sorted;
   } else {
-    const top5 = items.slice(0, 5);
-    const rest = items.slice(5);
+    const top5 = sorted.slice(0, 5);
+    const rest = sorted.slice(5);
     const others: DonutItem = {
       key: '__others__',
       displayName: tr4(
@@ -1395,17 +1480,22 @@ function renderDonutBreakdown(items: DonutItem[], emptyText: string): string {
       ),
       totalTokens: rest.reduce((acc, m) => acc + m.totalTokens, 0),
       estimatedCostUSD: rest.reduce((acc, m) => acc + m.estimatedCostUSD, 0),
+      cacheSavingsUSD: rest.reduce((acc, m) => acc + (m.cacheSavingsUSD ?? 0), 0),
+      over200kRequestCount: rest.reduce((acc, m) => acc + (m.over200kRequestCount ?? 0), 0),
+      over200kPremiumUSD: rest.reduce((acc, m) => acc + (m.over200kPremiumUSD ?? 0), 0),
     };
     displayed = [...top5, others];
   }
 
-  const sumDisplayed = Math.max(1, displayed.reduce((acc, m) => acc + Math.max(1, m.totalTokens), 0));
+  const useCost = state.breakdownSort === 'cost' && displayed.some((m) => m.estimatedCostUSD > 0);
+  const weightOf = (m: DonutItem) => (useCost ? Math.max(0.0001, m.estimatedCostUSD) : Math.max(1, m.totalTokens));
+  const sumDisplayed = Math.max(0.0001, displayed.reduce((acc, m) => acc + weightOf(m), 0));
   const r = 42;
   const circ = 2 * Math.PI * r;
   let offset = 0;
 
   const slices = displayed.map((m, idx) => {
-    const frac = Math.max(1, m.totalTokens) / sumDisplayed;
+    const frac = weightOf(m) / sumDisplayed;
     const len = frac * circ;
     const strokeDash = `${Math.max(1, len - 2).toFixed(2)} ${(circ - Math.max(1, len - 2)).toFixed(2)}`;
     const seg = `<circle cx="58" cy="58" r="${r}" fill="none" stroke="${PALETTE[idx % PALETTE.length]}" stroke-width="16" stroke-dasharray="${strokeDash}" stroke-dashoffset="${(-offset).toFixed(2)}" transform="rotate(-90 58 58)" />`;
@@ -1413,20 +1503,28 @@ function renderDonutBreakdown(items: DonutItem[], emptyText: string): string {
     return seg;
   }).join('');
 
-  const maxTokens = Math.max(1, ...displayed.map((m) => m.totalTokens));
+  const maxWeight = Math.max(0.0001, ...displayed.map(weightOf));
   const rows = displayed.map((m, idx) => {
-    const pct = Math.max(2, (m.totalTokens / maxTokens) * 100);
+    const pct = Math.max(2, (weightOf(m) / maxWeight) * 100);
     const color = PALETTE[idx % PALETTE.length];
+    const saved = m.cacheSavingsUSD ?? 0;
+    const overReqs = m.over200kRequestCount ?? 0;
+    const badgesHtml = [
+      typeof m.sessionCount === 'number' ? `<span class="tag-badge breakdown-meta-badge">${m.sessionCount}</span>` : '',
+      saved >= 0.01 ? `<span class="tag-badge good breakdown-meta-badge">-${compactBadgeUSD(saved)}</span>` : '',
+      overReqs > 0 ? `<span class="tag-badge warn breakdown-meta-badge">&gt;200K</span>` : '',
+    ].filter(Boolean).join('');
     return `
       <div class="model-row">
         <span class="model-name" title="${escapeHtml(m.displayName)}">
           <span class="dot" style="display:inline-block;margin-right:5px;background:${color}"></span>${escapeHtml(m.displayName)}
         </span>
+        <span class="model-badges">${badgesHtml}</span>
         <div class="linear-track">
           <div class="linear-fill" style="width:${pct.toFixed(1)}%;background:${color}"></div>
         </div>
-        <span class="model-num mono">${compactTokens(m.totalTokens)}</span>
-        <span class="model-num mono" style="font-weight:600;">${formatUSD(m.estimatedCostUSD)}</span>
+        <span class="model-num mono" style="font-weight:${state.breakdownSort === 'tokens' ? '600' : '400'};">${compactTokens(m.totalTokens)}</span>
+        <span class="model-num mono" style="font-weight:${state.breakdownSort === 'cost' ? '600' : '400'};">${formatUSD(m.estimatedCostUSD)}</span>
       </div>
     `;
   }).join('');
@@ -1443,26 +1541,38 @@ function renderSessionBreakdown(sessions: SessionUsageDTO[]): string {
   if (sessions.length === 0) {
     return `<div class="muted">${tr('所选周期暂无会话调用记录。', 'No session usage recorded in this period.')}</div>`;
   }
-  const top = sessions.slice(0, 20);
-  const maxTokens = Math.max(1, ...top.map((s) => s.totalTokens));
+  const sorted = [...sessions].sort((a, b) => {
+    if (state.breakdownSort === 'cost') {
+      if (Math.abs(a.estimatedCostUSD - b.estimatedCostUSD) > 1e-9) {
+        return b.estimatedCostUSD - a.estimatedCostUSD;
+      }
+      return b.totalTokens - a.totalTokens;
+    }
+    return b.totalTokens - a.totalTokens;
+  });
+  const top = sorted.slice(0, 20);
+  const useCost = state.breakdownSort === 'cost' && top.some((s) => s.estimatedCostUSD > 0);
+  const maxWeight = Math.max(0.0001, ...top.map((s) => (useCost ? Math.max(0.0001, s.estimatedCostUSD) : Math.max(1, s.totalTokens))));
 
   return `
     <div class="session-rows">
       ${top.map((s, idx) => {
-        const pct = Math.max(2, (s.totalTokens / maxTokens) * 100);
+        const w = useCost ? Math.max(0.0001, s.estimatedCostUSD) : Math.max(1, s.totalTokens);
+        const pct = Math.max(2, (w / maxWeight) * 100);
         const color = PALETTE[idx % PALETTE.length];
         return `
           <div class="session-row">
             <span class="model-name" title="${escapeHtml(s.title)}">${escapeHtml(s.title)}</span>
             <span class="session-row-tags">
-              ${s.projectName ? `<span class="tag-badge">${escapeHtml(s.projectName)}</span>` : ''}
+              ${s.projectName ? `<span class="tag-badge breakdown-meta-badge">${escapeHtml(s.projectName)}</span>` : ''}
+              ${(s.over200kRequestCount ?? 0) > 0 ? `<span class="tag-badge warn breakdown-meta-badge">200K</span>` : ''}
               ${s.clientSource === 'cli' ? `<span class="tag-badge cli">CLI</span>` : ''}
             </span>
             <div class="linear-track">
               <div class="linear-fill" style="width:${pct.toFixed(1)}%;background:${color}"></div>
             </div>
-            <span class="model-num mono">${compactTokens(s.totalTokens)}</span>
-            <span class="model-num mono" style="font-weight:600;">${formatUSD(s.estimatedCostUSD)}</span>
+            <span class="model-num mono" style="font-weight:${state.breakdownSort === 'tokens' ? '600' : '400'};">${compactTokens(s.totalTokens)}</span>
+            <span class="model-num mono" style="font-weight:${state.breakdownSort === 'cost' ? '600' : '400'};">${formatUSD(s.estimatedCostUSD)}</span>
           </div>
         `;
       }).join('')}
@@ -1580,6 +1690,21 @@ document.addEventListener('click', (e) => {
       state.breakdownDim = dim;
       render();
     }
+    return;
+  }
+  if (action === 'breakdown-sort' && actionEl?.dataset.sort) {
+    const sort = actionEl.dataset.sort;
+    if (sort === 'cost' || sort === 'tokens') {
+      state.breakdownSort = sort;
+      render();
+    }
+    return;
+  }
+  if (action === 'jump-top-project') {
+    state.breakdownDim = 'project';
+    state.breakdownSort = 'cost';
+    state.collapsedCards.delete('models');
+    render();
     return;
   }
   if (action === 'refresh-all') {

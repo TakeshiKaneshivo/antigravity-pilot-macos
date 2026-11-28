@@ -48,6 +48,11 @@ struct ProxyConfig: Codable, Equatable {
     var autoCheckUpdates: Bool
     var skippedUpdateVersion: String?
     var skippedAntigravityVersion: String?
+    var preventSleepWhileRunning: Bool
+    var notifyOnTaskComplete: Bool
+    var notifyOnApprovalNeeded: Bool
+    var notifyOnQuotaRecovered: Bool
+    var notifyOnlyWhenBackground: Bool
 
     var useOriginalIcon: Bool {
         get { runtimeIconStyle == .original }
@@ -91,7 +96,12 @@ struct ProxyConfig: Codable, Equatable {
         chartPalette: .morandiClassic,
         autoCheckUpdates: true,
         skippedUpdateVersion: nil,
-        skippedAntigravityVersion: nil
+        skippedAntigravityVersion: nil,
+        preventSleepWhileRunning: true,
+        notifyOnTaskComplete: true,
+        notifyOnApprovalNeeded: true,
+        notifyOnQuotaRecovered: true,
+        notifyOnlyWhenBackground: true
     )
 
     init(
@@ -110,7 +120,12 @@ struct ProxyConfig: Codable, Equatable {
         chartPalette: ChartPalettePreset = .morandiClassic,
         autoCheckUpdates: Bool = true,
         skippedUpdateVersion: String? = nil,
-        skippedAntigravityVersion: String? = nil
+        skippedAntigravityVersion: String? = nil,
+        preventSleepWhileRunning: Bool = true,
+        notifyOnTaskComplete: Bool = true,
+        notifyOnApprovalNeeded: Bool = true,
+        notifyOnQuotaRecovered: Bool = true,
+        notifyOnlyWhenBackground: Bool = true
     ) {
         self.host = host
         self.hookPort = hookPort
@@ -128,6 +143,11 @@ struct ProxyConfig: Codable, Equatable {
         self.autoCheckUpdates = autoCheckUpdates
         self.skippedUpdateVersion = skippedUpdateVersion
         self.skippedAntigravityVersion = skippedAntigravityVersion
+        self.preventSleepWhileRunning = preventSleepWhileRunning
+        self.notifyOnTaskComplete = notifyOnTaskComplete
+        self.notifyOnApprovalNeeded = notifyOnApprovalNeeded
+        self.notifyOnQuotaRecovered = notifyOnQuotaRecovered
+        self.notifyOnlyWhenBackground = notifyOnlyWhenBackground
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -148,6 +168,11 @@ struct ProxyConfig: Codable, Equatable {
         case autoCheckUpdates
         case skippedUpdateVersion
         case skippedAntigravityVersion
+        case preventSleepWhileRunning
+        case notifyOnTaskComplete
+        case notifyOnApprovalNeeded
+        case notifyOnQuotaRecovered
+        case notifyOnlyWhenBackground
     }
 
     init(from decoder: Decoder) throws {
@@ -177,6 +202,11 @@ struct ProxyConfig: Codable, Equatable {
         autoCheckUpdates = try container.decodeIfPresent(Bool.self, forKey: .autoCheckUpdates) ?? true
         skippedUpdateVersion = try container.decodeIfPresent(String.self, forKey: .skippedUpdateVersion)
         skippedAntigravityVersion = try container.decodeIfPresent(String.self, forKey: .skippedAntigravityVersion)
+        preventSleepWhileRunning = try container.decodeIfPresent(Bool.self, forKey: .preventSleepWhileRunning) ?? true
+        notifyOnTaskComplete = try container.decodeIfPresent(Bool.self, forKey: .notifyOnTaskComplete) ?? true
+        notifyOnApprovalNeeded = try container.decodeIfPresent(Bool.self, forKey: .notifyOnApprovalNeeded) ?? true
+        notifyOnQuotaRecovered = try container.decodeIfPresent(Bool.self, forKey: .notifyOnQuotaRecovered) ?? true
+        notifyOnlyWhenBackground = try container.decodeIfPresent(Bool.self, forKey: .notifyOnlyWhenBackground) ?? true
     }
 
     func encode(to encoder: Encoder) throws {
@@ -198,6 +228,11 @@ struct ProxyConfig: Codable, Equatable {
         try container.encode(autoCheckUpdates, forKey: .autoCheckUpdates)
         try container.encodeIfPresent(skippedUpdateVersion, forKey: .skippedUpdateVersion)
         try container.encodeIfPresent(skippedAntigravityVersion, forKey: .skippedAntigravityVersion)
+        try container.encode(preventSleepWhileRunning, forKey: .preventSleepWhileRunning)
+        try container.encode(notifyOnTaskComplete, forKey: .notifyOnTaskComplete)
+        try container.encode(notifyOnApprovalNeeded, forKey: .notifyOnApprovalNeeded)
+        try container.encode(notifyOnQuotaRecovered, forKey: .notifyOnQuotaRecovered)
+        try container.encode(notifyOnlyWhenBackground, forKey: .notifyOnlyWhenBackground)
     }
 
     static func normalizeHost(_ raw: String) -> String {

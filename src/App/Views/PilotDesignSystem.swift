@@ -671,6 +671,9 @@ struct PilotMetricTile: View {
     var icon: String? = nil
     var tint: Color = .accentColor
     var compact: Bool = false
+    var valueBadge: String? = nil
+    var valueBadgeTint: Color? = nil
+    var tooltip: String? = nil
 
     var body: some View {
         PilotCard(padding: compact ? 9 : 12) {
@@ -690,18 +693,35 @@ struct PilotMetricTile: View {
                         .lineLimit(1)
                 }
 
-                Text(value)
-                    .font(.system(compact ? .headline : .title3, design: .rounded).weight(.bold))
-                    .monospacedDigit()
-                    .contentTransition(.numericText())
-                    .lineLimit(1)
+                HStack(alignment: .firstTextBaseline, spacing: 5) {
+                    Text(value)
+                        .font(.system(compact ? .headline : .title3, design: .rounded).weight(.bold))
+                        .monospacedDigit()
+                        .contentTransition(.numericText())
+                        .lineLimit(1)
+
+                    if let valueBadge, !valueBadge.isEmpty {
+                        let badgeColor = valueBadgeTint ?? tint
+                        Text(valueBadge)
+                            .font(.system(size: 9.5, weight: .semibold, design: .rounded))
+                            .monospacedDigit()
+                            .foregroundStyle(badgeColor)
+                            .padding(.horizontal, 4.5)
+                            .padding(.vertical, 1.5)
+                            .background(Capsule().fill(badgeColor.opacity(0.14)))
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+                    }
+                }
 
                 Text(subtitle)
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
                     .lineLimit(1)
+                    .minimumScaleFactor(0.82)
             }
         }
+        .help(tooltip ?? "")
     }
 }
 

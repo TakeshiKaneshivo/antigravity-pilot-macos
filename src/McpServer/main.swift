@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import notify
 
 final class PilotMCPService: MCPServiceHandling, @unchecked Sendable {
     let serverVersion: String
@@ -414,7 +415,10 @@ final class PilotMCPService: MCPServiceHandling, @unchecked Sendable {
                     "totalTokens": m.totalTokens,
                     "requestCount": m.requestCount,
                     "estimatedCostUSD": m.estimatedCostUSD,
-                    "cacheSavingsUSD": m.cacheSavingsUSD
+                    "cacheSavingsUSD": m.cacheSavingsUSD,
+                    "over200kRequestCount": m.over200kRequestCount,
+                    "over200kTokens": m.over200kTokens,
+                    "over200kPremiumUSD": m.over200kPremiumUSD
                 ] as [String: Any]
             }
 
@@ -429,7 +433,10 @@ final class PilotMCPService: MCPServiceHandling, @unchecked Sendable {
                     "requestCount": p.requestCount,
                     "sessionCount": p.sessionCount,
                     "estimatedCostUSD": p.estimatedCostUSD,
-                    "cacheSavingsUSD": p.cacheSavingsUSD
+                    "cacheSavingsUSD": p.cacheSavingsUSD,
+                    "over200kRequestCount": p.over200kRequestCount,
+                    "over200kTokens": p.over200kTokens,
+                    "over200kPremiumUSD": p.over200kPremiumUSD
                 ] as [String: Any]
             }
 
@@ -446,6 +453,9 @@ final class PilotMCPService: MCPServiceHandling, @unchecked Sendable {
                     "requestCount": s.requestCount,
                     "estimatedCostUSD": s.estimatedCostUSD,
                     "cacheSavingsUSD": s.cacheSavingsUSD,
+                    "over200kRequestCount": s.over200kRequestCount,
+                    "over200kTokens": s.over200kTokens,
+                    "over200kPremiumUSD": s.over200kPremiumUSD,
                     "lastDateKey": s.lastDateKey
                 ] as [String: Any]
             }
@@ -483,7 +493,10 @@ final class PilotMCPService: MCPServiceHandling, @unchecked Sendable {
             "totalTokens": b.totalTokens,
             "requestCount": b.requestCount,
             "estimatedCostUSD": b.estimatedCostUSD,
-            "cacheSavingsUSD": b.cacheSavingsUSD
+            "cacheSavingsUSD": b.cacheSavingsUSD,
+            "over200kRequestCount": b.over200kRequestCount,
+            "over200kTokens": b.over200kTokens,
+            "over200kPremiumUSD": b.over200kPremiumUSD
         ]
     }
 
@@ -596,13 +609,32 @@ final class PilotMCPService: MCPServiceHandling, @unchecked Sendable {
         let toks = TokenFormatting.compactTokens(totals?["totalTokens"] as? Int ?? 0)
         let reqs = totals?["requestCount"] as? Int ?? 0
         let usd = TokenFormatting.usd(totals?["estimatedCostUSD"] as? Double ?? 0)
+        let savedVal = totals?["cacheSavingsUSD"] as? Double ?? 0
+        let overReqs = totals?["over200kRequestCount"] as? Int ?? 0
+        let overPrem = totals?["over200kPremiumUSD"] as? Double ?? 0
         let scanned = usage["scannedFilesCount"] as? Int ?? 0
         let periodLabel = usagePeriod(for: period).localizedTitle(lang)
+        var extras: [String] = []
+        if savedVal >= 0.005 {
+            let saved = TokenFormatting.usd(savedVal)
+            extras.append(L10n.t(
+                zhHans: "缓存省 \(saved)",
+                zhHant: "快取省 \(saved)",
+                en: "cache saved \(saved)",
+                ru: "кэш сэкономил \(saved)",
+                lang
+            ))
+        }
+        if overReqs > 0 {
+            let premStr = overPrem >= 0.005 ? " (+\(TokenFormatting.usd(overPrem)))" : ""
+            extras.append(">200K: \(overReqs)\(premStr)")
+        }
+        let extraSuffix = extras.isEmpty ? "" : " [\(extras.joined(separator: ", "))]"
         return L10n.t(
-            zhHans: "周期（\(periodLabel)）累计 \(toks) Tokens，\(reqs) 次模型调用，估算 API 账单 \(usd)（已扫描 \(scanned) 个会话归档）。",
-            zhHant: "週期（\(periodLabel)）累計 \(toks) Tokens，\(reqs) 次模型呼叫，估算 API 帳單 \(usd)（已掃描 \(scanned) 個工作階段歸檔）。",
-            en: "Period (\(periodLabel)): \(toks) tokens, \(reqs) calls, est. API cost \(usd) (\(scanned) transcripts scanned).",
-            ru: "Период (\(periodLabel)): \(toks) токенов, \(reqs) вызовов, оценка API \(usd) (просканировано логов: \(scanned)).",
+            zhHans: "周期（\(periodLabel)）累计 \(toks) Tokens，\(reqs) 次模型调用，估算 API 账单 \(usd)\(extraSuffix)（已扫描 \(scanned) 个会话归档）。",
+            zhHant: "週期（\(periodLabel)）累計 \(toks) Tokens，\(reqs) 次模型呼叫，估算 API 帳單 \(usd)\(extraSuffix)（已掃描 \(scanned) 個工作階段歸檔）。",
+            en: "Period (\(periodLabel)): \(toks) tokens, \(reqs) calls, est. API cost \(usd)\(extraSuffix) (\(scanned) transcripts scanned).",
+            ru: "Период (\(periodLabel)): \(toks) токенов, \(reqs) вызовов, оценка API \(usd)\(extraSuffix) (просканировано логов: \(scanned)).",
             lang
         )
     }
@@ -639,9 +671,11 @@ final class PilotMCPService: MCPServiceHandling, @unchecked Sendable {
     }
 }
 
-func parseArgs() -> (htmlPath: String?, version: String) {
+func parseArgs() -> (htmlPath: String?, version: String, hookEvent: PilotHookMode?, eventsFile: String?) {
     var htmlPath: String?
-    var version = "0.2.0"
+    var version = "0.2.1"
+    var hookEvent: PilotHookMode?
+    var eventsFile: String?
     let args = CommandLine.arguments
     var idx = 1
     while idx < args.count {
@@ -652,15 +686,47 @@ func parseArgs() -> (htmlPath: String?, version: String) {
         } else if arg == "--version", idx + 1 < args.count {
             version = args[idx + 1]
             idx += 2
+        } else if arg == "--hook-event", idx + 1 < args.count {
+            hookEvent = PilotHookMode(rawValue: args[idx + 1].trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
+            idx += 2
+        } else if arg == "--events-file", idx + 1 < args.count {
+            eventsFile = args[idx + 1]
+            idx += 2
         } else {
             idx += 1
         }
     }
-    return (htmlPath, version)
+    return (htmlPath, version, hookEvent, eventsFile)
+}
+
+func runHookModeAndExit(mode: PilotHookMode, eventsFile: String?) -> Never {
+    let stdinHandle = FileHandle.standardInput
+    var inputData = Data()
+    let maxBytes = 262_144
+    while inputData.count < maxBytes {
+        let chunk = stdinHandle.readData(ofLength: min(65_536, maxBytes - inputData.count))
+        if chunk.isEmpty { break }
+        inputData.append(chunk)
+    }
+
+    let (event, stdoutJSON) = PilotHookProcessor.parseHookStdin(inputData, mode: mode)
+    if let event {
+        let targetURL = eventsFile.map { URL(fileURLWithPath: $0) } ?? AppSupport().hookEventsURL
+        try? PilotHookProcessor.appendEvent(event, to: targetURL)
+        notify_post(PilotHookProcessor.darwinHookEventName)
+    }
+    let outLine = stdoutJSON + "\n"
+    if let outData = outLine.data(using: .utf8) {
+        try? FileHandle.standardOutput.write(contentsOf: outData)
+    }
+    exit(0)
 }
 
 signal(SIGPIPE, SIG_IGN)
 let parsed = parseArgs()
+if let hookMode = parsed.hookEvent {
+    runHookModeAndExit(mode: hookMode, eventsFile: parsed.eventsFile)
+}
 let service = PilotMCPService(htmlPath: parsed.htmlPath, version: parsed.version)
 let server = MCPStdioServer(handler: service)
 

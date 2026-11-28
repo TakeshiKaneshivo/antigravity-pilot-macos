@@ -70,7 +70,8 @@
 - **Прокси без TUN и хот-апдейт за 0.1 с**: направляет Antigravity через локальный SOCKS5/HTTP-прокси в изолированной копии (7 пресетов, IPv4/IPv6, обход `NO_PROXY`), смена портов без пересборки.
 - **3-этапная диагностика и защита от конфликтов**: проверка TCP-порта, SOCKS5-рукопожатия и выхода в сеть (`generate_204`); сначала проверяет прокси, затем аккуратно завершает запущенные копии.
 - **Нативный живой монитор**: состав контекста и иерархия шагов, TTFT, скорость и двух-оконные пулы квот `5h` / `7d` с автовыбором или закреплением чата.
-- **Тепловая карта и оценка стоимости**: 20-недельная карта, тренд за 14 дней, атрибуция Desktop + CLI, автосинхронизация тарифов и 4 палитры Моранди (синхронизация с панелью MCP).
+- **Тепловая карта, эффективность и рейтинг по стоимости**: 20-недельная карта, тренд за 14 дней, атрибуция Desktop + CLI, анализ экономии кэша и доплат `>200K`, сортировка по `$` / токенам (синхронизация с панелью MCP и 4 палитрами Моранди).
+- **Защита от сна и нативные уведомления**: 4 независимых переключателя в **Настройках** (вкл. по умолчанию): блокировка сна Mac через IOKit при активных задачах, уведомления о завершении/ошибке, ожидании подтверждения и восстановлении квот через `hooks.json` + фолбэк-опрос.
 - **Строка меню и плагин MCP**: сворачивание в меню (счётчик в дуге, контекст и квота `5h`/`7d`), нативные уведомления об обновлении оригинала и встроенная панель (0 токенов).
 - **Автообновление и 4 языка**: проверка SHA-256 через прокси или напрямую, 3 стиля иконки копии (Со значком / Оригинал / Pilot) и 4 языка интерфейса.
 
@@ -110,7 +111,7 @@ curl -fsSL https://raw.githubusercontent.com/TakeshiKaneshivo/antigravity-pilot-
 
 **Вариант B: Ручная загрузка DMG**
 
-Скачайте `Antigravity-Pilot-v0.2.0-macOS13-universal.dmg` на странице [Releases](https://github.com/TakeshiKaneshivo/antigravity-pilot-macos/releases) (или соберите по разделу [Сборка и тестирование](#сборка-и-тестирование)) и перетащите `Antigravity Pilot.app` в `Applications`.
+Скачайте `Antigravity-Pilot-v0.2.1-macOS13-universal.dmg` на странице [Releases](https://github.com/TakeshiKaneshivo/antigravity-pilot-macos/releases) (или соберите по разделу [Сборка и тестирование](#сборка-и-тестирование)) и перетащите `Antigravity Pilot.app` в `Applications`.
 
 > **Примечание**: приложение имеет локальную ad-hoc подпись. Если после загрузки через браузер macOS сообщает о повреждении файла или неизвестном разработчике, используйте Вариант A или снимите карантин:
 >
@@ -173,8 +174,8 @@ rm -rf "$HOME/.gemini/config/plugins/antigravity-pilot"
 2. **Трёхканальный прокси без TUN**: `libantigravity_proxy.dylib` (`__DATA,__interpose` + FakeIP `198.18.0.0/15` через SOCKS5), переменные окружения Go/Node и флаги главного процесса Chromium совместно маршрутизируют трафик, пропуская локальные CIDR по `NO_PROXY`.
 3. **Хот-апдейт за 0.1 с и одна иконка в Dock**: `AntigravityProxyLauncher` читает `proxy.env` и заменяет себя через `execv()`, поэтому смена портов не требует переподписи, а хэши SHA-256 бинарников защищают от ложной пересборки после `codesign`.
 4. **Нативный мониторинг**: находит `~/.gemini/antigravity/daemon/hub_*.json` и запрашивает локальный Connect-RPC без прокси для отображения контекста, скорости и квот моделей.
-5. **Инкрементальный учёт и стоимость**: инкрементально сканирует логи Desktop + CLI по `size + mtime` в `usage_cache.json` и оценивает расходы по автосинхронизируемому `pricing-catalog.json` (или `custom_pricing.json`).
-6. **Официальный MCP Apps и целостность ASAR**: панель работает без JS-инъекций и с 0 токенов на обновление (SEP-1865), а при смене иконки Pilot синхронизирует `app.asar` и `ElectronAsarIntegrity` с выравниванием Chromium Pickle.
+5. **Инкрементальный учёт и стоимость**: инкрементально сканирует логи Desktop + CLI по `size + mtime` в `usage_cache.json`, рассчитывает стоимость API, экономию кэша и доплаты `>200K` по автосинхронизируемому `pricing-catalog.json` (или `custom_pricing.json`).
+6. **Официальный MCP Apps, Hooks и целостность ASAR**: панель работает без JS-инъекций и с 0 токенов на обновление (SEP-1865) вместе с `hooks.json` для мгновенных уведомлений, а при смене иконки Pilot синхронизирует `app.asar` и `ElectronAsarIntegrity`.
 
 ---
 
@@ -196,9 +197,9 @@ npm --prefix src/McpAppWeb run typecheck && ./build.sh --build-web --dmg
 ```
 
 - **Флаги сборки**: `--native` (под текущий Mac), `--clean` (очистка `build/.cache`), `--notes-file <path>` (примечания к релизу).
-- **Переменные**: `APP_VERSION` (`0.2.0`), `MIN_MACOS` (`13.0`), `ARCHS` (`"arm64 x86_64"`) и `GITHUB_REPO`.
+- **Переменные**: `APP_VERSION` (`0.2.1`), `MIN_MACOS` (`13.0`), `ARCHS` (`"arm64 x86_64"`) и `GITHUB_REPO`.
 
-Выходные файлы: `build/Antigravity Pilot.app`, `build/Antigravity-Pilot-v0.2.0-macOS13-universal.dmg`, `build/latest.json`, `build/antigravity-pilot-mcp`, `build/libantigravity_proxy.dylib`, `build/AntigravityProxyLauncher`, `build/test_client`.
+Выходные файлы: `build/Antigravity Pilot.app`, `build/Antigravity-Pilot-v0.2.1-macOS13-universal.dmg`, `build/latest.json`, `build/antigravity-pilot-mcp`, `build/libantigravity_proxy.dylib`, `build/AntigravityProxyLauncher`, `build/test_client`.
 
 ### Автотесты и локальная проверка SOCKS5
 

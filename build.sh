@@ -24,7 +24,7 @@ Options:
   -h, --help           Show this help.
 
 Environment overrides:
-  APP_VERSION  Bundle short version & DMG version (default: 0.2.0)
+  APP_VERSION  Bundle short version & DMG version (default: 0.2.1)
   MIN_MACOS    Minimum supported macOS version (default: 13.0)
   ARCHS        Space-separated architectures (default: "arm64 x86_64", or host arch with --native)
   SDKROOT      macOS SDK path (default: xcrun --show-sdk-path)
@@ -83,7 +83,7 @@ mkdir -p "$BUILD_DIR" "$HASH_CACHE_DIR" "$ICON_CACHE_DIR" "$MODULE_CACHE_DIR" "$
 
 CC="${CC:-clang}"
 SWIFTC="${SWIFTC:-swiftc}"
-APP_VERSION="${APP_VERSION:-0.2.0}"
+APP_VERSION="${APP_VERSION:-0.2.1}"
 MIN_MACOS="${MIN_MACOS:-13.0}"
 if [[ "$NATIVE_ONLY" -eq 1 ]]; then
   ARCHS="$(uname -m)"
@@ -303,6 +303,7 @@ if command -v "$SWIFTC" >/dev/null 2>&1; then
   MCP_SOURCES=(
     "$ROOT/src/App/Models/Localization.swift"
     "$ROOT/src/App/Models/MonitorModels.swift"
+    "$ROOT/src/App/Models/PilotHookModels.swift"
     "$ROOT/src/App/Models/ProxyModels.swift"
     "$ROOT/src/App/Services/AppSupportStore.swift"
     "$ROOT/src/App/Services/LanguageServerClient.swift"
@@ -338,7 +339,7 @@ if command -v "$SWIFTC" >/dev/null 2>&1; then
 
   SWIFT_BINS=()
   for arch in "${ARCH_LIST[@]}"; do
-    build_swift_arch "AntigravityProxyBuilder" "$arch" -parse-as-library -- "${SWIFT_SOURCES[@]}"
+    build_swift_arch "AntigravityProxyBuilder" "$arch" -parse-as-library -framework IOKit -- "${SWIFT_SOURCES[@]}"
     SWIFT_BINS+=("$SWIFT_CACHE_DIR/AntigravityProxyBuilder/${arch}/AntigravityProxyBuilder")
   done
 

@@ -41,6 +41,7 @@ struct McpPluginInstaller {
         let fm = FileManager.default
         let pluginJson = pluginDir.appendingPathComponent("plugin.json")
         let mcpConfig = pluginDir.appendingPathComponent("mcp_config.json")
+        let hooksJson = pluginDir.appendingPathComponent("hooks.json")
         let binDest = pluginDir.appendingPathComponent("bin/antigravity-pilot-mcp")
         let htmlDest = pluginDir.appendingPathComponent("assets/dashboard.html")
         let logoDest = pluginDir.appendingPathComponent("assets/logo.png")
@@ -51,6 +52,7 @@ struct McpPluginInstaller {
 
         guard fm.fileExists(atPath: pluginJson.path),
               fm.fileExists(atPath: mcpConfig.path),
+              fm.fileExists(atPath: hooksJson.path),
               fm.fileExists(atPath: binDest.path),
               fm.fileExists(atPath: htmlDest.path) else {
             return .updateAvailable(
@@ -72,8 +74,9 @@ struct McpPluginInstaller {
             return sha256File(bundledPricing) == sha256File(pricingDest)
         }()
         let configMatches = (try? Data(contentsOf: mcpConfig)) == (try? expectedMCPConfigData(appVersion: bundledVersion))
+        let hooksMatches = (try? Data(contentsOf: hooksJson)) == (try? expectedHooksConfigData())
 
-        if binMatches && htmlMatches && logoMatches && pricingMatches && configMatches && installedVersion == bundledVersion {
+        if binMatches && htmlMatches && logoMatches && pricingMatches && configMatches && hooksMatches && installedVersion == bundledVersion {
             return .installedCurrent(version: installedVersion)
         }
         return .updateAvailable(installedVersion: installedVersion, bundledVersion: bundledVersion)
@@ -109,6 +112,9 @@ struct McpPluginInstaller {
 
         let mcpData = try expectedMCPConfigData(appVersion: appVersion)
         try mcpData.write(to: tempDir.appendingPathComponent("mcp_config.json"), options: .atomic)
+
+        let hooksData = try expectedHooksConfigData()
+        try hooksData.write(to: tempDir.appendingPathComponent("hooks.json"), options: .atomic)
 
         try fm.createDirectory(at: support.pluginsRoot, withIntermediateDirectories: true)
         var movedToBackup = false
@@ -215,6 +221,42 @@ struct McpPluginInstaller {
         )
         data.append(0x0A)
         return data
+    }
+
+    func expectedHooksConfigData() throws -> Data {
+        let payload: [String: Any] = [
+            "antigravity-pilot-notify": [
+                "Stop": [
+                    [
+                        "type": "command",
+                        "command": "DYLD_INSERT_LIBRARIES= ./bin/antigravity-pilot-mcp --hook-event stop",
+                        "timeout": 5
+                    ]
+                ],
+                "PreToolUse": [
+                    [
+                        "matcher": "ask_question",
+                        "hooks": [
+                            [
+                                "type": "command",
+                                "command": "DYLD_INSERT_LIBRARIES= ./bin/antigravity-pilot-mcp --hook-event pre-tool",
+                                "timeout": 5
+                            ]
+                        ]
+                    ]
+                ]
+            ]
+        ]
+        var data = try JSONSerialization.data(
+            withJSONObject: payload,
+            options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        )
+        data.append(0x0A)
+        return data
+    }
+
+    var hasHooksInstalled: Bool {
+        FileManager.default.fileExists(atPath: pluginDir.appendingPathComponent("hooks.json").path)
     }
 
     private func resolveBundledAssets() throws -> (mcpBinary: URL, dashboardHTML: URL, logoPNG: URL?, pricingCatalog: URL?) {

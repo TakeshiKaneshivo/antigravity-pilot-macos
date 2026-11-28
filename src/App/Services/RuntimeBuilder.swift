@@ -1413,6 +1413,11 @@ final class AppModel: ObservableObject {
     @Published var bannerSuccessMessage: String?
     @Published var isWorking = false
     @Published var isExternalOperationActive = false
+    @Published var requestedTab: MainTab?
+
+    func requestOpenTab(_ tab: MainTab) {
+        requestedTab = tab
+    }
 
     var isAnyOperationBusy: Bool {
         isWorking || isExternalOperationActive
@@ -1473,7 +1478,7 @@ final class AppModel: ObservableObject {
     }
 
     var appVersionText: String {
-        (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "0.2.0"
+        (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "0.2.1"
     }
 
     func load() {

@@ -4,6 +4,8 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -145,6 +147,9 @@ def main() -> int:
                 assert len(sc["usage"]["heatmapWeeks"]) == 52
                 assert "desktopArchiveCount" in sc["usage"]
                 assert "cliArchiveCount" in sc["usage"]
+                today_tot = sc["usage"]["totalsByPeriod"]["today"]
+                for k in ("over200kRequestCount", "over200kTokens", "over200kPremiumUSD", "cacheSavingsUSD"):
+                    assert k in today_tot, f"Missing {k} in totalsByPeriod.today"
             elif tool_name == "pilot_get_live_snapshot":
                 assert "proxyConfig" in sc and "proxyHealth" in sc
                 assert "activeRunningCount" in sc
@@ -156,6 +161,9 @@ def main() -> int:
                 assert "projectSummariesByPeriod" in sc
                 assert "sessionSummariesByPeriod" in sc
                 assert "subscriptionTier" in sc
+                all_tot = sc["totalsByPeriod"]["all"]
+                for k in ("over200kRequestCount", "over200kTokens", "over200kPremiumUSD", "cacheSavingsUSD"):
+                    assert k in all_tot, f"Missing {k} in totalsByPeriod.all"
 
             print(f"[PASS] tools/call {tool_name} succeeded ({sc_bytes} bytes)")
 
@@ -163,6 +171,72 @@ def main() -> int:
         rc = proc.wait(timeout=5)
         assert rc == 0, f"Server exited with {rc}"
         print("[PASS] MCP server exited cleanly on EOF")
+
+        # 7. --hook-event CLI fast-path checks
+        with tempfile.TemporaryDirectory() as tmpdir:
+            events_file = Path(tmpdir) / "hook_events.jsonl"
+
+            t_start = time.monotonic()
+            stop_res = subprocess.run(
+                [str(MCP_BIN), "--hook-event", "stop", "--events-file", str(events_file)],
+                input=json.dumps({
+                    "conversationId": "conv-stop-1",
+                    "workspacePaths": ["/tmp/demo-ws"],
+                    "terminationReason": "NO_TOOL_CALL",
+                    "fullyIdle": True,
+                    "continuationActive": False,
+                }).encode("utf-8"),
+                capture_output=True,
+                timeout=5,
+            )
+            elapsed = time.monotonic() - t_start
+            assert stop_res.returncode == 0
+            assert elapsed < 0.5, f"Hook stop took too long: {elapsed:.3f}s"
+            assert json.loads(stop_res.stdout.decode("utf-8")) == {}
+
+            cancel_res = subprocess.run(
+                [str(MCP_BIN), "--hook-event", "stop", "--events-file", str(events_file)],
+                input=json.dumps({
+                    "conversationId": "conv-cancel-1",
+                    "terminationReason": "USER_CANCELED",
+                    "fullyIdle": True,
+                }).encode("utf-8"),
+                capture_output=True,
+                timeout=5,
+            )
+            assert cancel_res.returncode == 0
+            assert json.loads(cancel_res.stdout.decode("utf-8")) == {}
+
+            ask_res = subprocess.run(
+                [str(MCP_BIN), "--hook-event", "pre-tool", "--events-file", str(events_file)],
+                input=json.dumps({
+                    "conversationId": "conv-ask-1",
+                    "toolCall": {"name": "ask_question", "args": {"questions": [{"question": "Continue?"}]}},
+                }).encode("utf-8"),
+                capture_output=True,
+                timeout=5,
+            )
+            assert ask_res.returncode == 0
+            assert json.loads(ask_res.stdout.decode("utf-8")) == {"decision": "allow"}
+
+            cmd_res = subprocess.run(
+                [str(MCP_BIN), "--hook-event", "pre-tool", "--events-file", str(events_file)],
+                input=json.dumps({
+                    "conversationId": "conv-cmd-1",
+                    "toolCall": {"name": "run_command", "args": {"CommandLine": "ls"}},
+                }).encode("utf-8"),
+                capture_output=True,
+                timeout=5,
+            )
+            assert cmd_res.returncode == 0
+            assert json.loads(cmd_res.stdout.decode("utf-8")) == {}
+
+            lines = [json.loads(line) for line in events_file.read_text("utf-8").splitlines() if line.strip()]
+            assert len(lines) == 2, f"Expected 2 recorded hook events, got {len(lines)}"
+            assert lines[0]["kind"] == "task_completed"
+            assert lines[1]["kind"] == "approval_needed"
+            print(f"[PASS] --hook-event CLI checks succeeded ({elapsed * 1000:.1f}ms)")
+
         return 0
     finally:
         if proc.poll() is None:

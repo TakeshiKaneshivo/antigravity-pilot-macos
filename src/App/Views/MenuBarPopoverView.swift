@@ -5,6 +5,7 @@ struct MenuBarPopoverView: View {
     @ObservedObject var monitorStore: MonitorStore
     @ObservedObject var updateStore: UpdateStore
     @ObservedObject var antigravityUpdateStore: AntigravityUpdateStore
+    @ObservedObject var powerAssertionService: PowerAssertionService
     var onOpenMainWindow: () -> Void
     var onOpenUpdatePopover: () -> Void
     var onClosePopover: () -> Void
@@ -100,6 +101,21 @@ struct MenuBarPopoverView: View {
                 }
             }
             Spacer()
+            if powerAssertionService.isPreventingSleep {
+                PilotStatusPill(
+                    text: L10n.t(zhHans: "防休眠", zhHant: "防休眠", en: "Awake", ru: "Не спит", lang),
+                    color: .orange,
+                    showDot: false,
+                    systemImage: "cup.and.saucer.fill"
+                )
+                .help(L10n.t(
+                    zhHans: "检测到活跃会话运行中，已自动阻止系统空闲休眠",
+                    zhHant: "偵測到活躍工作階段執行中，已自動阻止系統閒置休眠",
+                    en: "Preventing system idle sleep while active sessions are running",
+                    ru: "Предотвращение перехода в сон во время активных сессий",
+                    lang
+                ))
+            }
             if let updateVer = updateStore.availableVersionBadgeText(skippedVersion: appModel.config.skippedUpdateVersion) {
                 Button {
                     onClosePopover()

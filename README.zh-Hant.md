@@ -70,7 +70,8 @@
 - **免 TUN 代理與 0.1 秒熱更新**：透過隔離代理副本讓 Antigravity 經由本機 SOCKS5/HTTP 代理連線（內建 7 組常用預設、支援 IPv4/IPv6 與 `NO_PROXY` 區網繞過），改連接埠免重建秒開。
 - **三階健康偵測與衝突防護**：即時驗證「TCP 連接埠 → SOCKS5 交握 → 外網 `generate_204`」鏈路與 ENV 連接埠，先校驗代理再提示並一鍵優雅結束執行中執行個體。
 - **純原生即時監控**：追蹤上下文構成與步驟層級、TTFT、輸出速度及 `5h` / `7d` 雙視窗共享配額池，支援自動跟隨或固定工作階段。
-- **用量熱力圖與費用估算**：20 週熱力圖、14 日趨勢與 Desktop + CLI 歸因，內建自動同步定價表與 4 套莫蘭迪圖表配色（同步至應用內看板）。
+- **用量熱力圖與費用估算**：20 週熱力圖、14 日趨勢與 Desktop + CLI 歸因，支援快取實省、`>200K` 階梯溢價分析與按費用 (`$`) / Token 排行（同步至應用內看板及 4 套莫蘭迪配色）。
+- **長任務護航與系統通知**：進階設定提供 4 項獨立開關（預設全開）：執行中自動防休眠（IOKit 斷言，允許螢幕息屏）、任務完成/異常、等待審批/回覆與配額重置恢復通知，支援 `hooks.json` 秒級觸發與背景防打擾。
 - **選單列伴侶與官方應用內外掛**：常駐選單列（可自訂執行弧、上下文與 `5h`/`7d` 配額），原版更新原生系統通知；一鍵嵌入 0 Token 重新整理的應用內看板。
 - **應用內自更新與多語言**：支援直連/代理更新校驗 SHA-256，提供 3 種代理副本圖示樣式（角標 / 原版 / Pilot）與四語介面。
 
@@ -110,7 +111,7 @@ curl -fsSL https://raw.githubusercontent.com/TakeshiKaneshivo/antigravity-pilot-
 
 **方式 B：手動下載 DMG**
 
-前往 [Releases](https://github.com/TakeshiKaneshivo/antigravity-pilot-macos/releases) 下載 `Antigravity-Pilot-v0.2.0-macOS13-universal.dmg`（或參考[本機建置與測試](#本機建置與測試)自行編譯），開啟映像檔後將 `Antigravity Pilot.app` 拖入 `Applications`。
+前往 [Releases](https://github.com/TakeshiKaneshivo/antigravity-pilot-macos/releases) 下載 `Antigravity-Pilot-v0.2.1-macOS13-universal.dmg`（或參考[本機建置與測試](#本機建置與測試)自行編譯），開啟映像檔後將 `Antigravity Pilot.app` 拖入 `Applications`。
 
 > **提示**：應用採用本機 ad-hoc 簽章，若經瀏覽器下載並首次開啟時出現「**已損毀，無法打開**」或「**無法驗證開發者**」，改用方式 A 或執行以下指令清除隔離屬性即可：
 >
@@ -173,8 +174,8 @@ rm -rf "$HOME/.gemini/config/plugins/antigravity-pilot"
 2. **三通道免 TUN 代理**：由 `libantigravity_proxy.dylib`（`__DATA,__interpose` + `198.18.0.0/15` FakeIP 轉 SOCKS5）、Go/Node 環境變數及主 Chromium `--proxy-server` 參數協同接管全部程序流量，並依 `NO_PROXY` 規則直連區網 CIDR。
 3. **0.1 秒熱更新與單圖示**：`AntigravityProxyLauncher` 讀取外置 `proxy.env` 後原地 `execv()` 拉起主程式；改連接埠只重寫設定免重簽署，並記錄來源二進位 SHA-256 防止局部重簽後誤判重建。
 4. **原生即時監控**：自動探索本機 `~/.gemini/antigravity/daemon/hub_*.json`，透過停用代理的迴環 Connect-RPC 讀取上下文佔用、效能指標與模型共享配額池。
-5. **增量用量與帳單**：依 `size + mtime` 增量掃描 Desktop + CLI 工作階段日誌並快取至 `usage_cache.json`，結合自動同步的 `pricing-catalog.json`（支援 `custom_pricing.json` 覆寫）估算 API 費用。
-6. **官方應用內看板與圖示同步**：透過官方 MCP Apps（SEP-1865）提供零 JS 注入、0 Token 重新整理的應用內看板；切換 Pilot 圖示時同步依 Chromium Pickle 4 位元組對齊更新 `app.asar` 與 `ElectronAsarIntegrity`。
+5. **增量用量與帳單**：依 `size + mtime` 增量掃描 Desktop + CLI 工作階段日誌並快取至 `usage_cache.json`，結合自動同步的 `pricing-catalog.json`（支援 `custom_pricing.json` 覆寫）精確核算 API 費用、快取實省與 `>200K` 階梯溢價。
+6. **官方應用內看板、Hooks 與圖示同步**：透過官方 MCP Apps（SEP-1865）與原生生命週期 `hooks.json` 提供零 JS 注入、0 Token 重新整理的應用內看板及秒級任務通知；切換 Pilot 圖示時同步依 Chromium Pickle 4 位元組對齊更新 `app.asar` 與 `ElectronAsarIntegrity`。
 
 ---
 
@@ -196,9 +197,9 @@ npm --prefix src/McpAppWeb run typecheck && ./build.sh --build-web --dmg
 ```
 
 - **建置參數**：`--native` 僅編本機架構；`--clean` 清除 `build/.cache` 冷重建；`--notes-file <path>` 傳入發佈說明。
-- **環境變數**：支援覆寫 `APP_VERSION`（`0.2.0`）、`MIN_MACOS`（`13.0`）、`ARCHS`（`"arm64 x86_64"`）與 `GITHUB_REPO`。
+- **環境變數**：支援覆寫 `APP_VERSION`（`0.2.1`）、`MIN_MACOS`（`13.0`）、`ARCHS`（`"arm64 x86_64"`）與 `GITHUB_REPO`。
 
-主要產物：`build/Antigravity Pilot.app`、`build/Antigravity-Pilot-v0.2.0-macOS13-universal.dmg`、`build/latest.json`、`build/antigravity-pilot-mcp`、`build/libantigravity_proxy.dylib`、`build/AntigravityProxyLauncher`、`build/test_client`。
+主要產物：`build/Antigravity Pilot.app`、`build/Antigravity-Pilot-v0.2.1-macOS13-universal.dmg`、`build/latest.json`、`build/antigravity-pilot-mcp`、`build/libantigravity_proxy.dylib`、`build/AntigravityProxyLauncher`、`build/test_client`。
 
 ### 自動化校驗與本機抓包測試
 

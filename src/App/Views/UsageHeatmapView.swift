@@ -20,11 +20,39 @@ enum UsageBreakdownDimension: String, CaseIterable, Identifiable {
     }
 }
 
+enum UsageBreakdownSort: String, CaseIterable, Identifiable {
+    case cost
+    case tokens
+
+    var id: String { rawValue }
+
+    func compactLabel(_ lang: AppLanguage) -> String {
+        switch self {
+        case .cost: return "$"
+        case .tokens: return "Tok"
+        }
+    }
+
+    func tooltip(_ lang: AppLanguage) -> String {
+        switch self {
+        case .cost:
+            return L10n.t("按估算费用排行", "Rank by estimated cost", lang)
+        case .tokens:
+            return L10n.t("按 Token 总量排行", "Rank by total tokens", lang)
+        }
+    }
+}
+
 private struct BreakdownChartEntry: Identifiable {
     let id: String
     let displayName: String
     let totalTokens: Int
     let estimatedCostUSD: Double
+    let cacheSavingsUSD: Double
+    let cacheHitPercent: Int
+    let sessionCount: Int?
+    let over200kRequestCount: Int
+    let over200kPremiumUSD: Double
 }
 
 struct UsageHeatmapView: View {
@@ -35,6 +63,8 @@ struct UsageHeatmapView: View {
 
     @State private var selectedPeriod: UsagePeriod = .days30
     @State private var breakdownDimension: UsageBreakdownDimension = .model
+    @State private var breakdownSort: UsageBreakdownSort = .cost
+    @State private var hoveredBreakdownId: String?
     @State private var selectedDateKey: String?
     @State private var chartHoverDateKey: String?
 
@@ -82,9 +112,19 @@ struct UsageHeatmapView: View {
 
     private var displayedModelEntries: [BreakdownChartEntry] {
         let items = currentModels.map {
-            BreakdownChartEntry(id: $0.modelKey, displayName: $0.displayName, totalTokens: $0.totalTokens, estimatedCostUSD: $0.estimatedCostUSD)
+            BreakdownChartEntry(
+                id: $0.modelKey,
+                displayName: $0.displayName,
+                totalTokens: $0.totalTokens,
+                estimatedCostUSD: $0.estimatedCostUSD,
+                cacheSavingsUSD: $0.cacheSavingsUSD,
+                cacheHitPercent: Int(($0.cacheHitRate * 100).rounded()),
+                sessionCount: nil,
+                over200kRequestCount: $0.over200kRequestCount,
+                over200kPremiumUSD: $0.over200kPremiumUSD
+            )
         }
-        return collapseTop5(items)
+        return collapseTop5(sortEntries(items))
     }
 
     private var displayedProjectEntries: [BreakdownChartEntry] {
@@ -98,9 +138,47 @@ struct UsageHeatmapView: View {
                     lang
                 )
                 : p.displayName
-            return BreakdownChartEntry(id: p.projectKey, displayName: name, totalTokens: p.totalTokens, estimatedCostUSD: p.estimatedCostUSD)
+            return BreakdownChartEntry(
+                id: p.projectKey,
+                displayName: name,
+                totalTokens: p.totalTokens,
+                estimatedCostUSD: p.estimatedCostUSD,
+                cacheSavingsUSD: p.cacheSavingsUSD,
+                cacheHitPercent: Int((p.cacheHitRate * 100).rounded()),
+                sessionCount: p.sessionCount,
+                over200kRequestCount: p.over200kRequestCount,
+                over200kPremiumUSD: p.over200kPremiumUSD
+            )
         }
-        return collapseTop5(items)
+        return collapseTop5(sortEntries(items))
+    }
+
+    private var sortedCurrentSessions: [SessionUsageSummary] {
+        switch breakdownSort {
+        case .cost:
+            return currentSessions.sorted {
+                if abs($0.estimatedCostUSD - $1.estimatedCostUSD) > 1e-9 {
+                    return $0.estimatedCostUSD > $1.estimatedCostUSD
+                }
+                return $0.totalTokens > $1.totalTokens
+            }
+        case .tokens:
+            return currentSessions.sorted { $0.totalTokens > $1.totalTokens }
+        }
+    }
+
+    private func sortEntries(_ items: [BreakdownChartEntry]) -> [BreakdownChartEntry] {
+        switch breakdownSort {
+        case .cost:
+            return items.sorted {
+                if abs($0.estimatedCostUSD - $1.estimatedCostUSD) > 1e-9 {
+                    return $0.estimatedCostUSD > $1.estimatedCostUSD
+                }
+                return $0.totalTokens > $1.totalTokens
+            }
+        case .tokens:
+            return items.sorted { $0.totalTokens > $1.totalTokens }
+        }
     }
 
     private func collapseTop5(_ items: [BreakdownChartEntry]) -> [BreakdownChartEntry] {
@@ -117,7 +195,12 @@ struct UsageHeatmapView: View {
                 lang
             ),
             totalTokens: rest.reduce(0) { $0 + $1.totalTokens },
-            estimatedCostUSD: rest.reduce(0) { $0 + $1.estimatedCostUSD }
+            estimatedCostUSD: rest.reduce(0) { $0 + $1.estimatedCostUSD },
+            cacheSavingsUSD: rest.reduce(0) { $0 + $1.cacheSavingsUSD },
+            cacheHitPercent: 0,
+            sessionCount: nil,
+            over200kRequestCount: rest.reduce(0) { $0 + $1.over200kRequestCount },
+            over200kPremiumUSD: rest.reduce(0) { $0 + $1.over200kPremiumUSD }
         )
         return top5 + [others]
     }
@@ -170,30 +253,84 @@ struct UsageHeatmapView: View {
         }
     }
 
+    private func compactBadgeUSD(_ value: Double) -> String {
+        if value >= 100 {
+            return String(format: "$%.0f", value)
+        }
+        if value >= 10 {
+            return String(format: "$%.1f", value)
+        }
+        return String(format: "$%.2f", value)
+    }
+
     private var kpiGrid: some View {
         let total = currentTotal
         let promptTotal = total.inputTokens + total.cacheReadTokens
         let cacheRate = promptTotal > 0 ? Int((Double(total.cacheReadTokens) / Double(promptTotal) * 100).rounded()) : 0
 
-        let cacheSubtitle: String = {
-            let base = L10n.t(
-                zhHans: "命中 \(TokenFormatting.compactTokens(total.cacheReadTokens))",
-                zhHant: "命中 \(TokenFormatting.compactTokens(total.cacheReadTokens))",
-                en: "Cached \(TokenFormatting.compactTokens(total.cacheReadTokens))",
-                ru: "Кэш \(TokenFormatting.compactTokens(total.cacheReadTokens))",
-                lang
-            )
+        let cacheSubtitle = L10n.t(
+            zhHans: "命中 \(TokenFormatting.compactTokens(total.cacheReadTokens))",
+            zhHant: "命中 \(TokenFormatting.compactTokens(total.cacheReadTokens))",
+            en: "Cached \(TokenFormatting.compactTokens(total.cacheReadTokens))",
+            ru: "Кэш \(TokenFormatting.compactTokens(total.cacheReadTokens))",
+            lang
+        )
+        let cacheBadge: String? = total.cacheSavingsUSD >= 0.005 ? "-\(compactBadgeUSD(total.cacheSavingsUSD))" : nil
+        let cacheTooltip: String = {
             if total.cacheSavingsUSD >= 0.005 {
                 let saved = TokenFormatting.usd(total.cacheSavingsUSD)
+                let gross = TokenFormatting.usd(total.grossCostBeforeCacheUSD)
+                let discountPct = total.grossCostBeforeCacheUSD > 0
+                    ? Int((total.cacheSavingsUSD / total.grossCostBeforeCacheUSD * 100).rounded())
+                    : 0
                 return L10n.t(
-                    zhHans: "\(base) · 省 \(saved)",
-                    zhHant: "\(base) · 省 \(saved)",
-                    en: "\(base) · Saved \(saved)",
-                    ru: "\(base) · Эк. \(saved)",
+                    zhHans: "缓存命中省 \(saved) · 未缓存原价 \(gross)（节省 \(discountPct)%）",
+                    zhHant: "快取命中省 \(saved) · 未快取原價 \(gross)（節省 \(discountPct)%）",
+                    en: "Cache saved \(saved) · Gross without cache \(gross) (\(discountPct)% off)",
+                    ru: "Кэш сэкономил \(saved) · Без кэша \(gross) (-\(discountPct)%)",
                     lang
                 )
             }
-            return base
+            return cacheSubtitle
+        }()
+
+        let overReqs = total.over200kRequestCount
+        let overRatePct = total.requestCount > 0 ? Int((Double(overReqs) / Double(total.requestCount) * 100).rounded()) : 0
+        let callsBadge: String? = overReqs > 0 ? (overRatePct > 0 ? ">200K \(overRatePct)%" : ">200K") : nil
+        let callsSubtitle: String = {
+            if total.over200kPremiumUSD >= 0.005 {
+                return ">200K +\(TokenFormatting.usd(total.over200kPremiumUSD))"
+            }
+            if overReqs > 0 {
+                return "\(overReqs) >200K"
+            }
+            return L10n.t(
+                zhHans: "\(selectedPeriod.localizedTitle(lang)) PLANNER 轮次",
+                zhHant: "\(selectedPeriod.localizedTitle(lang)) PLANNER 輪次",
+                en: "\(selectedPeriod.localizedTitle(lang)) turns",
+                ru: "\(selectedPeriod.localizedTitle(lang)) шагов",
+                lang
+            )
+        }()
+        let callsTooltip: String = {
+            if overReqs > 0 {
+                let tokStr = TokenFormatting.compactTokens(total.over200kTokens)
+                let premStr = TokenFormatting.usd(total.over200kPremiumUSD)
+                return L10n.t(
+                    zhHans: "超 200K 上下文请求 \(overReqs) 次（占比 \(overRatePct)% · \(tokStr)），阶梯溢价 +\(premStr)。建议在长会话及时使用 /compact。",
+                    zhHant: "超 200K 上下文請求 \(overReqs) 次（佔比 \(overRatePct)% · \(tokStr)），階梯溢價 +\(premStr)。建議在長工作階段及時使用 /compact。",
+                    en: "\(overReqs) calls >200K (\(overRatePct)% · \(tokStr)), tiered premium +\(premStr). Tip: run /compact in long sessions.",
+                    ru: "Запросов >200K: \(overReqs) (\(overRatePct)% · \(tokStr)), доплата +\(premStr). Совет: используйте /compact.",
+                    lang
+                )
+            }
+            return L10n.t(
+                zhHans: "当前周期无超过 200K 上下文的请求（无阶梯溢价）",
+                zhHant: "目前週期無超過 200K 上下文的請求（無階梯溢價）",
+                en: "No >200K prompt calls in this period (zero tiered premium)",
+                ru: "Нет запросов >200K за период (без доплат)",
+                lang
+            )
         }()
 
         let tierInfo = monitorStore.effectiveSubscriptionTier
@@ -251,8 +388,8 @@ struct UsageHeatmapView: View {
                     title: L10n.t("总消耗 Token", "Total Tokens", lang),
                     value: TokenFormatting.compactTokens(total.totalTokens),
                     subtitle: L10n.t(
-                        zhHans: "输入 \(TokenFormatting.compactTokens(total.inputTokens)) · 输出 \(TokenFormatting.compactTokens(total.outputTokens))",
-                        zhHant: "輸入 \(TokenFormatting.compactTokens(total.inputTokens)) · 輸出 \(TokenFormatting.compactTokens(total.outputTokens))",
+                        zhHans: "入 \(TokenFormatting.compactTokens(total.inputTokens)) · 出 \(TokenFormatting.compactTokens(total.outputTokens))",
+                        zhHant: "入 \(TokenFormatting.compactTokens(total.inputTokens)) · 出 \(TokenFormatting.compactTokens(total.outputTokens))",
                         en: "In \(TokenFormatting.compactTokens(total.inputTokens)) · Out \(TokenFormatting.compactTokens(total.outputTokens))",
                         ru: "Вх \(TokenFormatting.compactTokens(total.inputTokens)) · Вых \(TokenFormatting.compactTokens(total.outputTokens))",
                         lang
@@ -267,21 +404,21 @@ struct UsageHeatmapView: View {
                     subtitle: cacheSubtitle,
                     icon: "bolt.fill",
                     tint: PilotMorandiPalette.kpiCache(preset: chartPalettePreset, colorScheme: colorScheme),
-                    compact: true
+                    compact: true,
+                    valueBadge: cacheBadge,
+                    valueBadgeTint: .green,
+                    tooltip: cacheTooltip
                 )
                 PilotMetricTile(
                     title: L10n.t("模型调用次数", "Model Calls", lang),
                     value: "\(total.requestCount)",
-                    subtitle: L10n.t(
-                        zhHans: "\(selectedPeriod.localizedTitle(lang)) PLANNER 轮次",
-                        zhHant: "\(selectedPeriod.localizedTitle(lang)) PLANNER 輪次",
-                        en: "\(selectedPeriod.localizedTitle(lang)) turns",
-                        ru: "\(selectedPeriod.localizedTitle(lang)) шагов",
-                        lang
-                    ),
+                    subtitle: callsSubtitle,
                     icon: "arrow.triangle.2.circlepath",
                     tint: PilotMorandiPalette.kpiCalls(preset: chartPalettePreset, colorScheme: colorScheme),
-                    compact: true
+                    compact: true,
+                    valueBadge: callsBadge,
+                    valueBadgeTint: .orange,
+                    tooltip: callsTooltip
                 )
                 PilotMetricTile(
                     title: L10n.t("估算 API 账单", "Est. API Cost", lang),
@@ -514,10 +651,65 @@ struct UsageHeatmapView: View {
         }
     }
 
+    private var hoveredBreakdownDetailText: String? {
+        guard let hoveredBreakdownId else { return nil }
+        switch breakdownDimension {
+        case .model:
+            if let item = displayedModelEntries.first(where: { $0.id == hoveredBreakdownId }) {
+                return formatBreakdownHoverDetail(item)
+            }
+        case .project:
+            if let item = displayedProjectEntries.first(where: { $0.id == hoveredBreakdownId }) {
+                return formatBreakdownHoverDetail(item)
+            }
+        case .session:
+            if let s = sortedCurrentSessions.first(where: { $0.id == hoveredBreakdownId }) {
+                let cachePct = Int((s.cacheHitRate * 100).rounded())
+                var parts: [String] = [s.title]
+                if s.cacheSavingsUSD >= 0.005 {
+                    parts.append("Cache \(cachePct)% (-\(TokenFormatting.usd(s.cacheSavingsUSD)))")
+                } else {
+                    parts.append("Cache \(cachePct)%")
+                }
+                if s.over200kRequestCount > 0 {
+                    let prem = s.over200kPremiumUSD >= 0.005 ? " (+\(TokenFormatting.usd(s.over200kPremiumUSD)))" : ""
+                    parts.append(">200K \(s.over200kRequestCount)\(prem)")
+                }
+                return parts.joined(separator: " · ")
+            }
+        }
+        return nil
+    }
+
+    private func formatBreakdownHoverDetail(_ item: BreakdownChartEntry) -> String {
+        var parts: [String] = [item.displayName]
+        if let sc = item.sessionCount {
+            parts.append(L10n.t(zhHans: "\(sc)会话", zhHant: "\(sc)工作階段", en: "\(sc) sess", ru: "\(sc) сес.", lang))
+        }
+        if item.cacheSavingsUSD >= 0.005 {
+            if item.id == "__others__" {
+                parts.append(L10n.t(
+                    zhHans: "省 \(TokenFormatting.usd(item.cacheSavingsUSD))",
+                    zhHant: "省 \(TokenFormatting.usd(item.cacheSavingsUSD))",
+                    en: "Saved \(TokenFormatting.usd(item.cacheSavingsUSD))",
+                    ru: "Эк. \(TokenFormatting.usd(item.cacheSavingsUSD))",
+                    lang
+                ))
+            } else {
+                parts.append("Cache \(item.cacheHitPercent)% (-\(TokenFormatting.usd(item.cacheSavingsUSD)))")
+            }
+        }
+        if item.over200kRequestCount > 0 {
+            let prem = item.over200kPremiumUSD >= 0.005 ? " (+\(TokenFormatting.usd(item.over200kPremiumUSD)))" : ""
+            parts.append(">200K \(item.over200kRequestCount)\(prem)")
+        }
+        return parts.joined(separator: " · ")
+    }
+
     private var breakdownCard: some View {
         PilotCard(padding: 11, fillHeight: true) {
             VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 10) {
+                HStack(spacing: 8) {
                     Picker("", selection: $breakdownDimension) {
                         ForEach(UsageBreakdownDimension.allCases) { dim in
                             Text(dim.localizedTitle(lang)).tag(dim)
@@ -525,13 +717,26 @@ struct UsageHeatmapView: View {
                     }
                     .labelsHidden()
                     .pickerStyle(.segmented)
-                    .frame(width: 210)
+                    .frame(width: 204)
 
-                    Spacer()
+                    Picker("", selection: $breakdownSort) {
+                        ForEach(UsageBreakdownSort.allCases) { s in
+                            Text(s.compactLabel(lang)).tag(s)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                    .frame(width: 72)
+                    .help(breakdownSort.tooltip(lang))
 
-                    Text(L10n.t("参考 API 定价估算，非实际扣费", "Estimated via API pricing, not actual billing", lang))
+                    Spacer(minLength: 6)
+
+                    Text(hoveredBreakdownDetailText ?? L10n.t("悬停行查看省钱与 >200K 明细", "Hover row for savings & >200K", lang))
                         .font(.caption2)
-                        .foregroundStyle(.tertiary)
+                        .monospacedDigit()
+                        .foregroundStyle(hoveredBreakdownDetailText == nil ? .tertiary : .secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
                 }
 
                 switch breakdownDimension {
@@ -552,15 +757,26 @@ struct UsageHeatmapView: View {
                         )
                     )
                 case .session:
-                    sessionBreakdownBody(sessions: Array(currentSessions.prefix(20)))
+                    sessionBreakdownBody(sessions: Array(sortedCurrentSessions.prefix(20)))
                 }
             }
         }
+        .onChange(of: breakdownDimension) { _ in
+            hoveredBreakdownId = nil
+        }
+    }
+
+    private func metricWeight(for item: BreakdownChartEntry, useCostMetric: Bool) -> Double {
+        if useCostMetric {
+            return max(0.0001, item.estimatedCostUSD)
+        }
+        return Double(max(1, item.totalTokens))
     }
 
     @ViewBuilder
     private func donutBreakdownBody(entries: [BreakdownChartEntry], emptyText: String) -> some View {
-        let maxTokens = max(1, entries.map(\.totalTokens).max() ?? 1)
+        let useCostMetric = (breakdownSort == .cost) && entries.contains(where: { $0.estimatedCostUSD > 0 })
+        let maxWeight = max(0.0001, entries.map { metricWeight(for: $0, useCostMetric: useCostMetric) }.max() ?? 1)
         if entries.isEmpty {
             Text(emptyText)
                 .font(.caption)
@@ -571,7 +787,7 @@ struct UsageHeatmapView: View {
                 if #available(macOS 14, *) {
                     Chart(entries) { item in
                         SectorMark(
-                            angle: .value("Tokens", max(1, item.totalTokens)),
+                            angle: .value("Metric", metricWeight(for: item, useCostMetric: useCostMetric)),
                             innerRadius: .ratio(0.60),
                             angularInset: 1.5
                         )
@@ -588,33 +804,53 @@ struct UsageHeatmapView: View {
                 VStack(spacing: 6) {
                     ForEach(Array(entries.enumerated()), id: \.element.id) { idx, item in
                         let rowColor = chartPalette[idx % chartPalette.count]
+                        let isHovered = hoveredBreakdownId == item.id
                         HStack(spacing: 8) {
-                            HStack(spacing: 6) {
+                            HStack(spacing: 5) {
                                 Circle()
                                     .fill(rowColor)
                                     .frame(width: 7, height: 7)
                                 Text(item.displayName)
-                                    .font(.caption.weight(.medium))
+                                    .font(.caption.weight(isHovered ? .semibold : .medium))
                                     .lineLimit(1)
+                                if item.over200kRequestCount > 0 {
+                                    Circle()
+                                        .fill(Color.orange)
+                                        .frame(width: 5, height: 5)
+                                }
                             }
                             .frame(width: 136, alignment: .leading)
 
                             PilotLinearBar(
-                                fraction: Double(item.totalTokens) / Double(maxTokens),
+                                fraction: metricWeight(for: item, useCostMetric: useCostMetric) / maxWeight,
                                 tint: rowColor,
                                 height: 5.5
                             )
 
                             Text(TokenFormatting.compactTokens(item.totalTokens))
-                                .font(.system(.caption, design: .rounded))
+                                .font(.system(.caption, design: .rounded).weight(breakdownSort == .tokens ? .semibold : .regular))
                                 .monospacedDigit()
                                 .frame(width: 54, alignment: .trailing)
 
                             Text(TokenFormatting.usd(item.estimatedCostUSD))
-                                .font(.system(.caption, design: .rounded).weight(.semibold))
+                                .font(.system(.caption, design: .rounded).weight(breakdownSort == .cost ? .semibold : .regular))
                                 .monospacedDigit()
                                 .frame(width: 56, alignment: .trailing)
                         }
+                        .padding(.vertical, 1)
+                        .background(
+                            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                .fill(isHovered ? Color.primary.opacity(0.05) : Color.clear)
+                        )
+                        .contentShape(Rectangle())
+                        .onHover { hovering in
+                            if hovering {
+                                hoveredBreakdownId = item.id
+                            } else if hoveredBreakdownId == item.id {
+                                hoveredBreakdownId = nil
+                            }
+                        }
+                        .help(formatBreakdownHoverDetail(item))
                     }
                 }
             }
@@ -624,7 +860,8 @@ struct UsageHeatmapView: View {
 
     @ViewBuilder
     private func sessionBreakdownBody(sessions: [SessionUsageSummary]) -> some View {
-        let maxTokens = max(1, sessions.map(\.totalTokens).max() ?? 1)
+        let useCostMetric = (breakdownSort == .cost) && sessions.contains(where: { $0.estimatedCostUSD > 0 })
+        let maxWeight = max(0.0001, sessions.map { useCostMetric ? max(0.0001, $0.estimatedCostUSD) : Double(max(1, $0.totalTokens)) }.max() ?? 1)
         if sessions.isEmpty {
             Text(L10n.t("所选周期暂无会话调用记录。", "No session usage recorded in this period.", lang))
                 .font(.caption)
@@ -635,9 +872,11 @@ struct UsageHeatmapView: View {
                 VStack(spacing: 5) {
                     ForEach(Array(sessions.enumerated()), id: \.element.id) { idx, item in
                         let rowColor = chartPalette[idx % chartPalette.count]
+                        let isHovered = hoveredBreakdownId == item.id
+                        let rowWeight = useCostMetric ? max(0.0001, item.estimatedCostUSD) : Double(max(1, item.totalTokens))
                         HStack(spacing: 8) {
                             Text(item.title)
-                                .font(.caption.weight(.medium))
+                                .font(.caption.weight(isHovered ? .semibold : .medium))
                                 .lineLimit(1)
                                 .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -652,6 +891,16 @@ struct UsageHeatmapView: View {
                                     .lineLimit(1)
                             }
 
+                            if item.over200kRequestCount > 0 {
+                                Text("200K")
+                                    .font(.system(size: 9, weight: .semibold))
+                                    .padding(.horizontal, 4.5)
+                                    .padding(.vertical, 1.5)
+                                    .background(Color.orange.opacity(0.16))
+                                    .foregroundStyle(.orange)
+                                    .clipShape(Capsule())
+                            }
+
                             if item.clientSource == .cli {
                                 Text("CLI")
                                     .font(.system(size: 9.5, weight: .semibold))
@@ -663,21 +912,34 @@ struct UsageHeatmapView: View {
                             }
 
                             PilotLinearBar(
-                                fraction: Double(item.totalTokens) / Double(maxTokens),
+                                fraction: rowWeight / maxWeight,
                                 tint: rowColor,
                                 height: 4.5
                             )
                             .frame(width: 68)
 
                             Text(TokenFormatting.compactTokens(item.totalTokens))
-                                .font(.system(.caption, design: .rounded))
+                                .font(.system(.caption, design: .rounded).weight(breakdownSort == .tokens ? .semibold : .regular))
                                 .monospacedDigit()
                                 .frame(width: 52, alignment: .trailing)
 
                             Text(TokenFormatting.usd(item.estimatedCostUSD))
-                                .font(.system(.caption, design: .rounded).weight(.semibold))
+                                .font(.system(.caption, design: .rounded).weight(breakdownSort == .cost ? .semibold : .regular))
                                 .monospacedDigit()
                                 .frame(width: 54, alignment: .trailing)
+                        }
+                        .padding(.vertical, 1)
+                        .background(
+                            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                .fill(isHovered ? Color.primary.opacity(0.05) : Color.clear)
+                        )
+                        .contentShape(Rectangle())
+                        .onHover { hovering in
+                            if hovering {
+                                hoveredBreakdownId = item.id
+                            } else if hoveredBreakdownId == item.id {
+                                hoveredBreakdownId = nil
+                            }
                         }
                     }
                 }

@@ -160,6 +160,12 @@ struct MainWindowView: View {
         .onAppear {
             monitorStore.setInteractiveVisible(true)
         }
+        .onChange(of: appModel.requestedTab) { target in
+            if let target {
+                selectedTab = target
+                appModel.requestedTab = nil
+            }
+        }
         .onChange(of: isSidebarCollapsed) { collapsed in
             UserDefaults.standard.set(collapsed, forKey: Self.sidebarCollapsedKey)
         }

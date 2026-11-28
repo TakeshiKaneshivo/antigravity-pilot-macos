@@ -186,6 +186,13 @@ struct InAppPluginView: View {
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                         Text(L10n.t(
+                            "• 随插件同步部署原生生命周期 hooks.json（任务完成与提问秒级提醒，绝不修改命令执行权限门禁），卸载时一并移除。",
+                            "• Deploys native lifecycle hooks.json alongside the plugin for instant task & prompt alerts (never overrides command approvals), cleanly removed on uninstall.",
+                            lang
+                        ))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        Text(L10n.t(
                             "• 为防止在 Antigravity 内部自我重启造成连接中断，应用内面板保持代理配置只读 + 实时三阶探测；修改端口或绕过规则请回到「代理概览 / 高级设置」。",
                             "• To avoid self-restart disconnects inside Antigravity, the in-app panel keeps proxy config read-only + live probing; edit ports or bypass rules in Proxy Overview / Settings.",
                             lang

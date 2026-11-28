@@ -9,6 +9,8 @@ struct AdvancedSettingsView: View {
 
     @State private var isNoProxyExpanded = false
     @State private var isMaintenanceExpanded = false
+    @State private var isGuardianExpanded = true
+    @State private var testNotificationStatus: String?
 
     var body: some View {
         ScrollView {
@@ -20,6 +22,9 @@ struct AdvancedSettingsView: View {
                     .disabled(appModel.isAnyOperationBusy)
 
                 behaviorCard
+                    .disabled(appModel.isAnyOperationBusy)
+
+                guardianAndNotificationsCard
                     .disabled(appModel.isAnyOperationBusy)
 
                 noProxyCard
@@ -41,6 +46,21 @@ struct AdvancedSettingsView: View {
             appModel.scheduleSaveNoProxy()
         }
         .onChange(of: appModel.config.enableMenuBarMonitor) { _ in
+            appModel.savePreferencesOnly()
+        }
+        .onChange(of: appModel.config.preventSleepWhileRunning) { _ in
+            appModel.savePreferencesOnly()
+        }
+        .onChange(of: appModel.config.notifyOnTaskComplete) { _ in
+            appModel.savePreferencesOnly()
+        }
+        .onChange(of: appModel.config.notifyOnApprovalNeeded) { _ in
+            appModel.savePreferencesOnly()
+        }
+        .onChange(of: appModel.config.notifyOnQuotaRecovered) { _ in
+            appModel.savePreferencesOnly()
+        }
+        .onChange(of: appModel.config.notifyOnlyWhenBackground) { _ in
             appModel.savePreferencesOnly()
         }
     }
@@ -323,6 +343,177 @@ struct AdvancedSettingsView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+    }
+
+    private var enabledGuardianFeatureCount: Int {
+        [
+            appModel.config.preventSleepWhileRunning,
+            appModel.config.notifyOnTaskComplete,
+            appModel.config.notifyOnApprovalNeeded,
+            appModel.config.notifyOnQuotaRecovered
+        ].filter { $0 }.count
+    }
+
+    private var guardianAndNotificationsCard: some View {
+        let hasHooks = McpPluginInstaller(support: appModel.support).hasHooksInstalled
+        return PilotCard(padding: 10) {
+            VStack(alignment: .leading, spacing: 8) {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        isGuardianExpanded.toggle()
+                    }
+                } label: {
+                    HStack(spacing: 8) {
+                        Label(
+                            L10n.t(
+                                zhHans: "长任务护航与系统通知",
+                                zhHant: "長任務護航與系統通知",
+                                en: "Guardian & System Notifications",
+                                ru: "Защита от сна и уведомления",
+                                lang
+                            ),
+                            systemImage: "bell.badge"
+                        )
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+
+                        Spacer(minLength: 8)
+
+                        PilotStatusPill(
+                            text: "\(enabledGuardianFeatureCount)/4",
+                            color: enabledGuardianFeatureCount > 0 ? .green : .secondary,
+                            showDot: false
+                        )
+
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .rotationEffect(.degrees(isGuardianExpanded ? 90 : 0))
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+
+                if isGuardianExpanded {
+                    Divider()
+
+                    Toggle(
+                        L10n.t(
+                            zhHans: "运行中自动防休眠（仅阻止系统空闲睡眠，允许屏幕息屏）",
+                            zhHant: "執行中自動防休眠（僅阻止系統閒置睡眠，允許螢幕息屏）",
+                            en: "Prevent system sleep while sessions run (display may sleep)",
+                            ru: "Не давать Mac засыпать во время активных задач",
+                            lang
+                        ),
+                        isOn: $appModel.config.preventSleepWhileRunning
+                    )
+                    .font(.callout)
+
+                    Toggle(
+                        L10n.t(
+                            zhHans: "任务完成 / 异常中止时通知（点击切回 Antigravity）",
+                            zhHant: "任務完成 / 異常中止時通知（點擊切回 Antigravity）",
+                            en: "Notify when a task completes or errors (click focuses Antigravity)",
+                            ru: "Уведомлять о завершении или ошибке задачи",
+                            lang
+                        ),
+                        isOn: $appModel.config.notifyOnTaskComplete
+                    )
+                    .font(.callout)
+
+                    Toggle(
+                        L10n.t(
+                            zhHans: "Agent 等待回复或审批时通知",
+                            zhHant: "Agent 等待回覆或審批時通知",
+                            en: "Notify when agent awaits input or approval",
+                            ru: "Уведомлять при ожидании ответа или подтверждения",
+                            lang
+                        ),
+                        isOn: $appModel.config.notifyOnApprovalNeeded
+                    )
+                    .font(.callout)
+
+                    Toggle(
+                        L10n.t(
+                            zhHans: "共享配额池重置恢复时通知（低水位 ≤20% 恢复至 ≥80%）",
+                            zhHant: "共享配額池重置恢復時通知（低水位 ≤20% 恢復至 ≥80%）",
+                            en: "Notify when quota pool recovers (from ≤20% back to ≥80%)",
+                            ru: "Уведомлять о восстановлении квоты (с ≤20% до ≥80%)",
+                            lang
+                        ),
+                        isOn: $appModel.config.notifyOnQuotaRecovered
+                    )
+                    .font(.callout)
+
+                    if appModel.config.notifyOnTaskComplete || appModel.config.notifyOnApprovalNeeded {
+                        Toggle(
+                            L10n.t(
+                                zhHans: "仅当 Antigravity 不在前台时弹出任务/审批通知",
+                                zhHant: "僅當 Antigravity 不在前台時彈出任務/審批通知",
+                                en: "Only notify for tasks/approvals when Antigravity is in background",
+                                ru: "Уведомлять о задачах только когда Antigravity в фоне",
+                                lang
+                            ),
+                            isOn: $appModel.config.notifyOnlyWhenBackground
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(.leading, 18)
+                    }
+
+                    Divider()
+
+                    HStack(spacing: 8) {
+                        Label(
+                            hasHooks
+                                ? L10n.t(
+                                    zhHans: "Hooks 秒级触发已就绪",
+                                    zhHant: "Hooks 秒級觸發已就緒",
+                                    en: "Instant Hooks active",
+                                    ru: "Мгновенные Hooks активны",
+                                    lang
+                                )
+                                : L10n.t(
+                                    zhHans: "当前仅轮询检测（安装应用内插件可启用 Hooks 秒级提醒）",
+                                    zhHant: "目前僅輪詢偵測（安裝應用內外掛可啟用 Hooks 秒級提醒）",
+                                    en: "Polling mode (install In-App Plugin for instant Hooks)",
+                                    ru: "Режим опроса (установите плагин для Hooks)",
+                                    lang
+                                ),
+                            systemImage: hasHooks ? "bolt.fill" : "clock"
+                        )
+                        .font(.caption2)
+                        .foregroundStyle(hasHooks ? .green : .secondary)
+                        .lineLimit(1)
+
+                        Spacer(minLength: 8)
+
+                        if let testNotificationStatus {
+                            Text(testNotificationStatus)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Button(L10n.t(
+                            zhHans: "发送测试通知",
+                            zhHant: "發送測試通知",
+                            en: "Test Notification",
+                            ru: "Тест уведомления",
+                            lang
+                        )) {
+                            SystemNotificationService.shared.postTestNotification(language: lang) { ok in
+                                DispatchQueue.main.async {
+                                    testNotificationStatus = ok
+                                        ? L10n.t("已发送", "Sent", lang)
+                                        : L10n.t("未授权通知权限", "Permission needed", lang)
+                                }
+                            }
+                        }
+                        .controlSize(.small)
+                    }
+                }
+            }
+        }
     }
 
     private var noProxyRuleCount: Int {

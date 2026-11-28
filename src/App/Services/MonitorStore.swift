@@ -1,5 +1,95 @@
 import Foundation
 
+struct QuotaRecoveryBucketState: Codable, Equatable {
+    var lastRemainingFraction: Double
+    var lastResetTimeEpoch: Double?
+    var enteredLowState: Bool
+    var lastNotifiedRecoveryEpoch: Double?
+}
+
+struct QuotaRecoveryEvent: Equatable {
+    let poolId: String
+    let poolTitle: String
+    let windowKind: QuotaWindowKind
+    let remainingPercent: Int
+}
+
+enum QuotaRecoveryEvaluator {
+    static func evaluate(
+        previous: [String: QuotaRecoveryBucketState],
+        pools: [QuotaPoolGroup],
+        now: Date = Date(),
+        lowThreshold: Double = 0.20,
+        recoveredThreshold: Double = 0.80,
+        minJump: Double = 0.50,
+        cooldownSec: TimeInterval = 600
+    ) -> (nextState: [String: QuotaRecoveryBucketState], events: [QuotaRecoveryEvent]) {
+        var next = previous
+        var events: [QuotaRecoveryEvent] = []
+        let nowEpoch = now.timeIntervalSince1970
+
+        for pool in pools {
+            let items: [(key: String, kind: QuotaWindowKind, frac: Double, resetEpoch: Double?)]
+            if pool.buckets.isEmpty {
+                items = [("\(pool.id)|pool", pool.tightestWindowKind, pool.remainingFraction, pool.resetTime?.timeIntervalSince1970)]
+            } else {
+                items = pool.buckets.map { b in
+                    ("\(pool.id)|\(b.windowKind.rawValue)", b.windowKind, b.remainingFraction, b.resetTime?.timeIntervalSince1970)
+                }
+            }
+
+            for item in items {
+                let frac = min(max(item.frac, 0), 1)
+                var state = next[item.key] ?? QuotaRecoveryBucketState(
+                    lastRemainingFraction: frac,
+                    lastResetTimeEpoch: item.resetEpoch,
+                    enteredLowState: frac <= lowThreshold,
+                    lastNotifiedRecoveryEpoch: nil
+                )
+
+                if previous[item.key] != nil {
+                    let jumpedUp = (frac - state.lastRemainingFraction) >= minJump
+                    let recovered = state.enteredLowState && (frac >= recoveredThreshold || jumpedUp)
+                    let cooldownOK = state.lastNotifiedRecoveryEpoch.map { (nowEpoch - $0) >= cooldownSec } ?? true
+
+                    if recovered && cooldownOK {
+                        let pct = Int((frac * 100).rounded())
+                        events.append(QuotaRecoveryEvent(
+                            poolId: pool.id,
+                            poolTitle: pool.title,
+                            windowKind: item.kind,
+                            remainingPercent: pct
+                        ))
+                        state.enteredLowState = false
+                        state.lastNotifiedRecoveryEpoch = nowEpoch
+                    } else if frac <= lowThreshold {
+                        state.enteredLowState = true
+                    }
+                    state.lastRemainingFraction = frac
+                    state.lastResetTimeEpoch = item.resetEpoch
+                }
+                next[item.key] = state
+            }
+        }
+        return (next, events)
+    }
+
+    static func loadState(from url: URL) -> [String: QuotaRecoveryBucketState] {
+        guard let data = try? Data(contentsOf: url),
+              let decoded = try? JSONDecoder().decode([String: QuotaRecoveryBucketState].self, from: data) else {
+            return [:]
+        }
+        return decoded
+    }
+
+    static func saveState(_ state: [String: QuotaRecoveryBucketState], to url: URL) {
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        if let data = try? JSONEncoder().encode(state) {
+            try? data.write(to: url, options: .atomic)
+        }
+    }
+}
+
 @MainActor
 final class MonitorStore: ObservableObject {
     @Published var liveHub: DaemonHubInfo?
@@ -29,10 +119,18 @@ final class MonitorStore: ObservableObject {
     private var liveRefreshGeneration = 0
     private var didInitialModelCatalogSync = false
     private var needsFollowUpHistoryRefresh = false
+    private var previousSessionStatuses: [String: String] = [:]
+    private var hasSeededSessionStatuses = false
+    private var quotaRecoveryState: [String: QuotaRecoveryBucketState] = [:]
+
+    var onQuotaRecovered: ((QuotaRecoveryEvent) -> Void)?
+    var onSessionCompletedFallback: ((SessionSummary) -> Void)?
+    var onSessionApprovalFallback: ((SessionSummary) -> Void)?
 
     init(support: AppSupport = AppSupport()) {
         self.support = support
         self.lastKnownTier = StoredSubscriptionTier.load(from: support.lastKnownTierURL)
+        self.quotaRecoveryState = QuotaRecoveryEvaluator.loadState(from: support.quotaNotificationStateURL)
     }
 
     deinit {
@@ -187,6 +285,7 @@ final class MonitorStore: ObservableObject {
                 self.activeContext = contextSnap
                 self.lastLiveError = nil
                 self.lastUpdatedAt = Date()
+                self.evaluateMonitorNotifications(sessions: sessionList, pools: pools, supportCopy: supportCopy)
                 self.rescheduleTimer()
 
                 if !catalog.isEmpty && !self.didInitialModelCatalogSync {
@@ -418,6 +517,47 @@ final class MonitorStore: ObservableObject {
         }
         let hrs = diff / 3600
         return L10n.t(zhHans: "\(hrs)小时前", zhHant: "\(hrs)小時前", en: "\(hrs)h ago", ru: "\(hrs)ч назад", lang)
+    }
+
+    private func evaluateMonitorNotifications(
+        sessions: [SessionSummary],
+        pools: [QuotaPoolGroup],
+        supportCopy: AppSupport
+    ) {
+        let (nextQuotaState, quotaEvents) = QuotaRecoveryEvaluator.evaluate(
+            previous: quotaRecoveryState,
+            pools: pools
+        )
+        if nextQuotaState != quotaRecoveryState {
+            quotaRecoveryState = nextQuotaState
+            Task.detached(priority: .utility) {
+                QuotaRecoveryEvaluator.saveState(nextQuotaState, to: supportCopy.quotaNotificationStateURL)
+            }
+        }
+        for event in quotaEvents {
+            onQuotaRecovered?(event)
+        }
+
+        var nextStatuses: [String: String] = [:]
+        for session in sessions where !session.isSubagent {
+            let statusUpper = session.status.uppercased()
+            nextStatuses[session.id] = statusUpper
+
+            if hasSeededSessionStatuses, let prevUpper = previousSessionStatuses[session.id] {
+                let wasRunning = prevUpper.contains("RUNNING")
+                let isRunningNow = statusUpper.contains("RUNNING")
+                let wasWaiting = prevUpper.contains("WAITING") || prevUpper.contains("APPROVAL")
+                let isWaitingNow = statusUpper.contains("WAITING") || statusUpper.contains("APPROVAL")
+
+                if !wasWaiting && isWaitingNow {
+                    onSessionApprovalFallback?(session)
+                } else if wasRunning && !isRunningNow && !isWaitingNow {
+                    onSessionCompletedFallback?(session)
+                }
+            }
+        }
+        previousSessionStatuses = nextStatuses
+        hasSeededSessionStatuses = true
     }
 
     private func rescheduleTimer() {

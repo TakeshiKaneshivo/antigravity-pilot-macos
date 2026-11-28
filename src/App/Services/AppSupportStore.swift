@@ -75,6 +75,14 @@ struct AppSupport {
         root.appendingPathComponent("last_known_tier.json")
     }
 
+    var hookEventsURL: URL {
+        root.appendingPathComponent("hook_events.jsonl")
+    }
+
+    var quotaNotificationStateURL: URL {
+        root.appendingPathComponent("quota_notification_state.json")
+    }
+
     var updatesDirectory: URL {
         root.appendingPathComponent("Updates", isDirectory: true)
     }
