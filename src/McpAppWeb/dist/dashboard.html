@@ -1870,8 +1870,8 @@ container holding the app. Specify either width or maxWidth, and either height o
               <button type="button" data-action="breakdown-dim" data-dim="session" class="${$.breakdownDim==="session"?"active":""}">${D("\u6309\u4F1A\u8BDD","By Session")}</button>
             </div>
             <div class="segmented">
-              <button type="button" data-action="breakdown-sort" data-sort="cost" class="${$.breakdownSort==="cost"?"active":""}">$</button>
-              <button type="button" data-action="breakdown-sort" data-sort="tokens" class="${$.breakdownSort==="tokens"?"active":""}">Tok</button>
+              <button type="button" data-action="breakdown-sort" data-sort="cost" class="${$.breakdownSort==="cost"?"active":""}">${_e("\u8D39\u7528","\u8CBB\u7528","Cost","\u0426\u0435\u043D\u0430")}</button>
+              <button type="button" data-action="breakdown-sort" data-sort="tokens" class="${$.breakdownSort==="tokens"?"active":""}">${_e("Token","Token","Tokens","\u0422\u043E\u043A\u0435\u043D\u044B")}</button>
             </div>
           </div>
           <span class="muted">${D("\u53C2\u8003 API \u5B9A\u4EF7\u4F30\u7B97\uFF0C\u975E\u5B9E\u9645\u6263\u8D39","Estimated via API pricing, not actual billing")}</span>

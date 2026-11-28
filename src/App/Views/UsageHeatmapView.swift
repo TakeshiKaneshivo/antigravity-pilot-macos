@@ -28,17 +28,31 @@ enum UsageBreakdownSort: String, CaseIterable, Identifiable {
 
     func compactLabel(_ lang: AppLanguage) -> String {
         switch self {
-        case .cost: return "$"
-        case .tokens: return "Tok"
+        case .cost:
+            return L10n.t(zhHans: "费用", zhHant: "費用", en: "Cost", ru: "Цена", lang)
+        case .tokens:
+            return L10n.t(zhHans: "Token", zhHant: "Token", en: "Tokens", ru: "Токены", lang)
         }
     }
 
     func tooltip(_ lang: AppLanguage) -> String {
         switch self {
         case .cost:
-            return L10n.t("按估算费用排行", "Rank by estimated cost", lang)
+            return L10n.t(
+                zhHans: "按估算费用排行",
+                zhHant: "按估算費用排行",
+                en: "Rank by estimated cost",
+                ru: "Сортировать по стоимости",
+                lang
+            )
         case .tokens:
-            return L10n.t("按 Token 总量排行", "Rank by total tokens", lang)
+            return L10n.t(
+                zhHans: "按 Token 总量排行",
+                zhHant: "按 Token 總量排行",
+                en: "Rank by total tokens",
+                ru: "Сортировать по токенам",
+                lang
+            )
         }
     }
 }
@@ -717,7 +731,8 @@ struct UsageHeatmapView: View {
                     }
                     .labelsHidden()
                     .pickerStyle(.segmented)
-                    .frame(width: 204)
+                    .controlSize(.small)
+                    .fixedSize()
 
                     Picker("", selection: $breakdownSort) {
                         ForEach(UsageBreakdownSort.allCases) { s in
@@ -726,12 +741,19 @@ struct UsageHeatmapView: View {
                     }
                     .labelsHidden()
                     .pickerStyle(.segmented)
-                    .frame(width: 72)
+                    .controlSize(.small)
+                    .fixedSize()
                     .help(breakdownSort.tooltip(lang))
 
                     Spacer(minLength: 6)
 
-                    Text(hoveredBreakdownDetailText ?? L10n.t("悬停行查看省钱与 >200K 明细", "Hover row for savings & >200K", lang))
+                    Text(hoveredBreakdownDetailText ?? L10n.t(
+                        zhHans: "悬停行查看省钱与 >200K 明细",
+                        zhHant: "懸停行查看省錢與 >200K 明細",
+                        en: "Hover row for savings & >200K",
+                        ru: "Наведите для деталей и >200K",
+                        lang
+                    ))
                         .font(.caption2)
                         .monospacedDigit()
                         .foregroundStyle(hoveredBreakdownDetailText == nil ? .tertiary : .secondary)

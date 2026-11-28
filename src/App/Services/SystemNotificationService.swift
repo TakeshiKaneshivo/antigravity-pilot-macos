@@ -307,6 +307,11 @@ final class SystemNotificationService: NSObject, UNUserNotificationCenterDelegat
         }
     }
 
+    nonisolated static func taskFinishedDedupKey(conversationId: String, title: String?) -> String {
+        let cidKey = conversationId.isEmpty ? (title ?? "default") : conversationId.lowercased()
+        return "task_finished|\(cidKey)"
+    }
+
     func postTaskFinished(
         conversationId: String,
         title: String?,
@@ -319,9 +324,8 @@ final class SystemNotificationService: NSObject, UNUserNotificationCenterDelegat
         if config.notifyOnlyWhenBackground && isAntigravityFrontmost() {
             return
         }
-        let kindKey = isError ? PilotHookEventKind.taskErrored.rawValue : PilotHookEventKind.taskCompleted.rawValue
         let cidKey = conversationId.isEmpty ? (title ?? "default") : conversationId.lowercased()
-        guard shouldDeliver(dedupKey: "\(kindKey)|\(cidKey)", cooldownSec: 10.0) else { return }
+        guard shouldDeliver(dedupKey: Self.taskFinishedDedupKey(conversationId: conversationId, title: title), cooldownSec: 10.0) else { return }
 
         let lang = config.appLanguage
         let notifTitle = isError
@@ -414,33 +418,6 @@ final class SystemNotificationService: NSObject, UNUserNotificationCenterDelegat
             subtitle: nil,
             body: body,
             action: "openMonitor"
-        )
-    }
-
-    func postTestNotification(language: AppLanguage, completion: (@Sendable (Bool) -> Void)? = nil) {
-        let title = "Antigravity Pilot"
-        let subtitle = L10n.t(
-            zhHans: "系统通知通道测试成功",
-            zhHant: "系統通知通道測試成功",
-            en: "Notification Test Succeeded",
-            ru: "Тест уведомлений успешен",
-            language
-        )
-        let body = L10n.t(
-            zhHans: "长任务完成、等待审批及配额恢复时将通过此处提醒你。",
-            zhHant: "長任務完成、等待審批及配額恢復時將透過此處提醒你。",
-            en: "Task completion, approval prompts, and quota recoveries will alert here.",
-            ru: "Уведомления о завершении задач, подтверждениях и квотах будут приходить сюда.",
-            language
-        )
-        postGenericNotification(
-            identifier: "pilot.test.\(Int(Date().timeIntervalSince1970))",
-            title: title,
-            subtitle: subtitle,
-            body: body,
-            action: "openMainWindow",
-            requestPermissionIfNeeded: true,
-            completion: completion
         )
     }
 

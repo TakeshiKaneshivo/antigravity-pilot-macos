@@ -52,16 +52,18 @@ enum QuotaRecoveryEvaluator {
                     let recovered = state.enteredLowState && (frac >= recoveredThreshold || jumpedUp)
                     let cooldownOK = state.lastNotifiedRecoveryEpoch.map { (nowEpoch - $0) >= cooldownSec } ?? true
 
-                    if recovered && cooldownOK {
-                        let pct = Int((frac * 100).rounded())
-                        events.append(QuotaRecoveryEvent(
-                            poolId: pool.id,
-                            poolTitle: pool.title,
-                            windowKind: item.kind,
-                            remainingPercent: pct
-                        ))
+                    if recovered {
+                        if cooldownOK {
+                            let pct = Int((frac * 100).rounded())
+                            events.append(QuotaRecoveryEvent(
+                                poolId: pool.id,
+                                poolTitle: pool.title,
+                                windowKind: item.kind,
+                                remainingPercent: pct
+                            ))
+                            state.lastNotifiedRecoveryEpoch = nowEpoch
+                        }
                         state.enteredLowState = false
-                        state.lastNotifiedRecoveryEpoch = nowEpoch
                     } else if frac <= lowThreshold {
                         state.enteredLowState = true
                     }
@@ -222,6 +224,8 @@ final class MonitorStore: ObservableObject {
                 self.activeRunningSessionCount = 0
                 self.quotaPools = []
                 self.lastLiveError = nil
+                self.previousSessionStatuses = [:]
+                self.hasSeededSessionStatuses = false
                 self.isRefreshingLive = false
                 self.rescheduleTimer()
                 return
@@ -548,10 +552,11 @@ final class MonitorStore: ObservableObject {
                 let isRunningNow = statusUpper.contains("RUNNING")
                 let wasWaiting = prevUpper.contains("WAITING") || prevUpper.contains("APPROVAL")
                 let isWaitingNow = statusUpper.contains("WAITING") || statusUpper.contains("APPROVAL")
+                let isCanceledNow = statusUpper.contains("CANCEL")
 
                 if !wasWaiting && isWaitingNow {
                     onSessionApprovalFallback?(session)
-                } else if wasRunning && !isRunningNow && !isWaitingNow {
+                } else if wasRunning && !isRunningNow && !isWaitingNow && !isCanceledNow {
                     onSessionCompletedFallback?(session)
                 }
             }

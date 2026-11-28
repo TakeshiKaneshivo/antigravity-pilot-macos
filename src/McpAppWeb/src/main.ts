@@ -1355,8 +1355,8 @@ function renderUsageTab(usage: UsageHistoryDTO | null): string {
               <button type="button" data-action="breakdown-dim" data-dim="session" class="${state.breakdownDim === 'session' ? 'active' : ''}">${tr('按会话', 'By Session')}</button>
             </div>
             <div class="segmented">
-              <button type="button" data-action="breakdown-sort" data-sort="cost" class="${state.breakdownSort === 'cost' ? 'active' : ''}">$</button>
-              <button type="button" data-action="breakdown-sort" data-sort="tokens" class="${state.breakdownSort === 'tokens' ? 'active' : ''}">Tok</button>
+              <button type="button" data-action="breakdown-sort" data-sort="cost" class="${state.breakdownSort === 'cost' ? 'active' : ''}">${tr4('费用', '費用', 'Cost', 'Цена')}</button>
+              <button type="button" data-action="breakdown-sort" data-sort="tokens" class="${state.breakdownSort === 'tokens' ? 'active' : ''}">${tr4('Token', 'Token', 'Tokens', 'Токены')}</button>
             </div>
           </div>
           <span class="muted">${tr('参考 API 定价估算，非实际扣费', 'Estimated via API pricing, not actual billing')}</span>

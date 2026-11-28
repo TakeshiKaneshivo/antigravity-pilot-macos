@@ -2688,12 +2688,16 @@ enum SmokeTestRunner {
         let step2 = QuotaRecoveryEvaluator.evaluate(previous: step1.nextState, pools: [highPool], now: quotaT0.addingTimeInterval(60))
         let step3 = QuotaRecoveryEvaluator.evaluate(previous: step2.nextState, pools: [lowPool], now: quotaT0.addingTimeInterval(120))
         let step4 = QuotaRecoveryEvaluator.evaluate(previous: step3.nextState, pools: [highPool], now: quotaT0.addingTimeInterval(180))
+        let step5 = QuotaRecoveryEvaluator.evaluate(previous: step4.nextState, pools: [highPool], now: quotaT0.addingTimeInterval(900))
         check(
             step1.events.isEmpty
                 && step2.events.count == 1
                 && step2.events[0].remainingPercent == 95
-                && step4.events.isEmpty,
-            "QuotaRecoveryEvaluator triggers once on low->recovered transition and respects cooldown"
+                && step4.events.isEmpty
+                && step5.events.isEmpty
+                && SystemNotificationService.taskFinishedDedupKey(conversationId: "AbC", title: "x")
+                    == SystemNotificationService.taskFinishedDedupKey(conversationId: "abc", title: "y"),
+            "QuotaRecoveryEvaluator clears low state during cooldown and taskFinishedDedupKey unifies completion/error"
         )
 
         // 42. PilotHookProcessor stdin parsing & PreToolUse safety gate

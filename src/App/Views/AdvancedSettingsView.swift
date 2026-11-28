@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UserNotifications
 
 struct AdvancedSettingsView: View {
     @Environment(\.appLanguage) private var lang
@@ -10,7 +11,7 @@ struct AdvancedSettingsView: View {
     @State private var isNoProxyExpanded = false
     @State private var isMaintenanceExpanded = false
     @State private var isGuardianExpanded = true
-    @State private var testNotificationStatus: String?
+    @State private var isNotificationPermissionDenied = false
 
     var body: some View {
         ScrollView {
@@ -356,6 +357,7 @@ struct AdvancedSettingsView: View {
 
     private var guardianAndNotificationsCard: some View {
         let hasHooks = McpPluginInstaller(support: appModel.support).hasHooksInstalled
+        let showBackgroundOption = appModel.config.notifyOnTaskComplete || appModel.config.notifyOnApprovalNeeded
         return PilotCard(padding: 10) {
             VStack(alignment: .leading, spacing: 8) {
                 Button {
@@ -378,6 +380,43 @@ struct AdvancedSettingsView: View {
                         .foregroundStyle(.primary)
 
                         Spacer(minLength: 8)
+
+                        PilotStatusPill(
+                            text: hasHooks
+                                ? L10n.t(
+                                    zhHans: "Hooks 已就绪",
+                                    zhHant: "Hooks 已就緒",
+                                    en: "Hooks Ready",
+                                    ru: "Hooks готовы",
+                                    lang
+                                )
+                                : L10n.t(
+                                    zhHans: "轮询模式",
+                                    zhHant: "輪詢模式",
+                                    en: "Polling",
+                                    ru: "Опрос",
+                                    lang
+                                ),
+                            color: hasHooks ? .green : .secondary,
+                            showDot: false,
+                            systemImage: hasHooks ? "bolt.fill" : "clock"
+                        )
+                        .help(hasHooks
+                            ? L10n.t(
+                                zhHans: "已部署原生生命周期 hooks.json，任务结束与提问可秒级提醒",
+                                zhHant: "已部署原生生命週期 hooks.json，任務結束與提問可秒級提醒",
+                                en: "Native lifecycle hooks.json is active for instant task & prompt alerts",
+                                ru: "Активны нативные hooks.json для мгновенных уведомлений",
+                                lang
+                            )
+                            : L10n.t(
+                                zhHans: "当前通过轮询检测任务状态；在「应用内插件」安装插件后可启用 Hooks 秒级触发",
+                                zhHant: "目前透過輪詢偵測任務狀態；在「應用內外掛」安裝外掛後可啟用 Hooks 秒級觸發",
+                                en: "Currently polling status; install the In-App Plugin to enable instant Hooks",
+                                ru: "Сейчас используется опрос; установите плагин для мгновенных Hooks",
+                                lang
+                            )
+                        )
 
                         PilotStatusPill(
                             text: "\(enabledGuardianFeatureCount)/4",
@@ -445,73 +484,59 @@ struct AdvancedSettingsView: View {
                     )
                     .font(.callout)
 
-                    if appModel.config.notifyOnTaskComplete || appModel.config.notifyOnApprovalNeeded {
-                        Toggle(
-                            L10n.t(
-                                zhHans: "仅当 Antigravity 不在前台时弹出任务/审批通知",
-                                zhHant: "僅當 Antigravity 不在前台時彈出任務/審批通知",
-                                en: "Only notify for tasks/approvals when Antigravity is in background",
-                                ru: "Уведомлять о задачах только когда Antigravity в фоне",
-                                lang
-                            ),
-                            isOn: $appModel.config.notifyOnlyWhenBackground
-                        )
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .padding(.leading, 18)
-                    }
+                    if showBackgroundOption || isNotificationPermissionDenied {
+                        Divider()
 
-                    Divider()
-
-                    HStack(spacing: 8) {
-                        Label(
-                            hasHooks
-                                ? L10n.t(
-                                    zhHans: "Hooks 秒级触发已就绪",
-                                    zhHant: "Hooks 秒級觸發已就緒",
-                                    en: "Instant Hooks active",
-                                    ru: "Мгновенные Hooks активны",
-                                    lang
+                        HStack(spacing: 10) {
+                            if showBackgroundOption {
+                                Toggle(
+                                    L10n.t(
+                                        zhHans: "仅当 Antigravity 不在前台时弹出任务/审批通知",
+                                        zhHant: "僅當 Antigravity 不在前台時彈出任務/審批通知",
+                                        en: "Only notify for tasks/approvals when Antigravity is in background",
+                                        ru: "Уведомлять о задачах только когда Antigravity в фоне",
+                                        lang
+                                    ),
+                                    isOn: $appModel.config.notifyOnlyWhenBackground
                                 )
-                                : L10n.t(
-                                    zhHans: "当前仅轮询检测（安装应用内插件可启用 Hooks 秒级提醒）",
-                                    zhHant: "目前僅輪詢偵測（安裝應用內外掛可啟用 Hooks 秒級提醒）",
-                                    en: "Polling mode (install In-App Plugin for instant Hooks)",
-                                    ru: "Режим опроса (установите плагин для Hooks)",
-                                    lang
-                                ),
-                            systemImage: hasHooks ? "bolt.fill" : "clock"
-                        )
-                        .font(.caption2)
-                        .foregroundStyle(hasHooks ? .green : .secondary)
-                        .lineLimit(1)
-
-                        Spacer(minLength: 8)
-
-                        if let testNotificationStatus {
-                            Text(testNotificationStatus)
-                                .font(.caption2)
+                                .font(.caption)
                                 .foregroundStyle(.secondary)
-                        }
+                            }
 
-                        Button(L10n.t(
-                            zhHans: "发送测试通知",
-                            zhHant: "發送測試通知",
-                            en: "Test Notification",
-                            ru: "Тест уведомления",
-                            lang
-                        )) {
-                            SystemNotificationService.shared.postTestNotification(language: lang) { ok in
-                                DispatchQueue.main.async {
-                                    testNotificationStatus = ok
-                                        ? L10n.t("已发送", "Sent", lang)
-                                        : L10n.t("未授权通知权限", "Permission needed", lang)
+                            Spacer(minLength: 8)
+
+                            if isNotificationPermissionDenied {
+                                Button(L10n.t(
+                                    zhHans: "开启通知权限",
+                                    zhHant: "開啟通知權限",
+                                    en: "Enable Notifications",
+                                    ru: "Включить уведомления",
+                                    lang
+                                )) {
+                                    if let url = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension") {
+                                        NSWorkspace.shared.open(url)
+                                    }
                                 }
+                                .controlSize(.small)
                             }
                         }
-                        .controlSize(.small)
                     }
                 }
+            }
+        }
+        .onAppear {
+            refreshNotificationPermissionState()
+        }
+    }
+
+    private func refreshNotificationPermissionState() {
+        guard SystemNotificationService.isRunningInAppBundle else {
+            isNotificationPermissionDenied = false
+            return
+        }
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
+            DispatchQueue.main.async {
+                isNotificationPermissionDenied = (settings.authorizationStatus == .denied)
             }
         }
     }

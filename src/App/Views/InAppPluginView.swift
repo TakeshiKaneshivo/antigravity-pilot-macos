@@ -186,8 +186,10 @@ struct InAppPluginView: View {
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                         Text(L10n.t(
-                            "• 随插件同步部署原生生命周期 hooks.json（任务完成与提问秒级提醒，绝不修改命令执行权限门禁），卸载时一并移除。",
-                            "• Deploys native lifecycle hooks.json alongside the plugin for instant task & prompt alerts (never overrides command approvals), cleanly removed on uninstall.",
+                            zhHans: "• 随插件同步部署原生生命周期 hooks.json（任务完成与提问秒级提醒，绝不修改命令执行权限门禁），卸载时一并移除。",
+                            zhHant: "• 隨外掛同步部署原生生命週期 hooks.json（任務完成與提問秒級提醒，絕不修改指令執行權限門禁），解除安裝時一併移除。",
+                            en: "• Deploys native lifecycle hooks.json alongside the plugin for instant task & prompt alerts (never overrides command approvals), cleanly removed on uninstall.",
+                            ru: "• Устанавливает нативный hooks.json вместе с плагином для мгновенных уведомлений (не меняя права команд) и удаляет его при деинсталляции.",
                             lang
                         ))
                         .font(.caption2)
